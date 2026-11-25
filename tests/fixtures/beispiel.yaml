@@ -1,0 +1,19 @@
+# Neutrales Test-Beispiel (kein produktiver Walkthrough)
+id: beispiel
+name: Beispiel-Walkthrough
+category: Test
+
+steps:
+  - id: grunddaten
+    title: Grunddaten
+    questions:
+      - { id: titel, label: Titel, type: text, required: true }
+      - { id: menge, label: Menge, type: integer, min: 1, unit: Stk. }
+  - id: unterlagen
+    title: Unterlagen
+    questions:
+      - { id: tabelle, label: Tabelle, type: file, required: true }
+      - { id: anhaenge, label: Anhänge, type: files }
+prompt: |
+  Bearbeite {{ answers.titel }}.
+  {{ dateien_liste }}
