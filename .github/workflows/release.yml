@@ -33,6 +33,17 @@ jobs:
         run: uv run pytest -q
       - name: Build
         run: uv run python scripts/build.py ${{ matrix.args }}
+      - name: Starttest (App muss 15 s ohne Absturz laufen)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then apps="dist/PAGER/PAGER.exe dist/onefile/PAGER.exe"; else apps="dist/PAGER.app/Contents/MacOS/PAGER"; fi
+          for app in $apps; do
+            "$app" & pid=$!
+            sleep 15
+            if ! kill -0 $pid 2>/dev/null; then echo "::error::$app ist beim Start abgestürzt"; exit 1; fi
+            kill $pid || true
+            echo "OK: $app"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: pager-${{ matrix.os }}
