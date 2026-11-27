@@ -36,7 +36,7 @@ def _plain_text(path: Path) -> str | None:
         return None  # Binärdatei
     for encoding in ("utf-8-sig", "cp1252"):
         try:
-            return raw.decode(encoding)
+            return raw.decode(encoding).replace("\r\n", "\n")
         except UnicodeDecodeError:
             continue
     return None

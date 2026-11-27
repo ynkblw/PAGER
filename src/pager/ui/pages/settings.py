@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QPlainTextEdit, QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
+from pager.agent.profiles import split_command
 from pager.config import BACKENDS, Settings, builtin_workflow_dir, user_workflow_dir
 from pager.core.workflow import Workflow
 from pager.copilot import CopilotCliBackend
@@ -310,7 +311,7 @@ class SettingsPage(QWidget):
 
     def _apply(self) -> bool:
         try:
-            extra = shlex.split(self.extra_args.text(), posix=sys.platform != "win32")
+            extra = split_command(self.extra_args.text())
         except ValueError as exc:
             self.save_banner.show_message("error", f"CLI-Parameter ungültig: {exc}")
             return False

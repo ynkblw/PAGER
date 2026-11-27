@@ -50,7 +50,19 @@ class AgentSetupError(Exception):
 
 
 def split_command(text: str) -> list[str]:
-    return shlex.split(text, posix=sys.platform != "win32") if text.strip() else []
+    """Zerlegt eine Befehlszeile. Unter Windows bleiben Backslashes erhalten, Anführungszeichen
+    um einzelne Teile (``"C:\\Program Files\\…\\x.exe"``) werden entfernt."""
+    if not text.strip():
+        return []
+    if sys.platform != "win32":
+        return shlex.split(text)
+    return [_unquote(part) for part in shlex.split(text, posix=False)]
+
+
+def _unquote(part: str) -> str:
+    if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'":
+        return part[1:-1]
+    return part
 
 
 # ---------------------------------------------------------------------------

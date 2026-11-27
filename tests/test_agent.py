@@ -1,5 +1,6 @@
 """ACP-Client, Agent-Profile, Agent-Fenster im Walkthrough-Modell – gegen einen simulierten Agenten."""
 
+import json
 import queue
 import sys
 import time
@@ -81,7 +82,8 @@ def test_acp_connect_prompt_and_raw_protocol(session, tmp_path):
     # cwd und MCP-Server werden im ACP-Format übergeben
     new_reply = next(r.text for r in raws if r.direction == "in" and '"sessionId": "s1"' in r.text
                      and "_cwd" in r.text)
-    assert str(tmp_path.resolve()) in new_reply and '"name": "tia"' in new_reply
+    new_result = json.loads(new_reply)["result"]
+    assert new_result["_cwd"] == str(tmp_path.resolve()) and new_result["_mcp"][0]["name"] == "tia"
 
     assert transcript.last_reply == "Echo: hallo" and transcript.replies == 1
     assert transcript.as_answer()["verlauf"].startswith("**Du:**\n\nhallo")
@@ -355,3 +357,11 @@ def test_builtin_example_workflow():
     draft = A.load_draft(wf.source)
     assert A.validate_draft(draft)[1] == []
     assert load_workflow(wf.source).model_dump() == Workflow.model_validate(A.clean_draft(draft)).model_dump()
+
+
+def test_split_command_windows_quotes(monkeypatch):
+    monkeypatch.setattr(P.sys, "platform", "win32")
+    assert P.split_command(r'"C:\Program Files\nodejs\npx.cmd" -y "@scope/pkg" --x') == [
+        r"C:\Program Files\nodejs\npx.cmd", "-y", "@scope/pkg", "--x"]
+    monkeypatch.setattr(P.sys, "platform", "darwin")
+    assert P.split_command("'/a b/c' --flag") == ["/a b/c", "--flag"]
