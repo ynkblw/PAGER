@@ -24,15 +24,21 @@ def data_dir() -> Path:
 
 
 def user_workflow_dir() -> Path:
-    """Persönlicher Ordner für Walkthroughs (die App selbst bringt keine mit)."""
+    """Persönlicher Ordner für eigene Walkthroughs."""
     return config_dir() / "workflows"
 
 
 BACKENDS = {
     "chat": "Copilot Chat (Prompt kopieren & einfügen)",
-    "copilot-cli": "GitHub Copilot CLI (automatisch)",
-    "demo": "Demo-Modus (ohne Copilot)",
+    "acp": "KI-Agent über ACP (Claude Code · GitHub Copilot CLI)",
+    "copilot-cli": "GitHub Copilot CLI – Einzelaufruf ohne ACP (alt)",
+    "demo": "Demo-Modus (ohne KI)",
 }
+
+
+def builtin_workflow_dir() -> Path:
+    """Mitgelieferte Beispiel-Walkthroughs (schreibgeschützt, Bearbeiten erzeugt eine Kopie)."""
+    return Path(__file__).resolve().parent / "resources" / "workflows"
 
 
 @dataclass
@@ -46,7 +52,19 @@ class Settings:
     copilot_path: str = ""  # leer = automatisch im PATH suchen
     model: str = ""  # leer = Copilot-Standard
 
+    # KI-Agent über ACP
+    agent: str = "claude-code"  # claude-code | copilot | custom
+    claude_path: str = ""  # leer = claude im PATH suchen
+    use_installed_claude: bool = True  # Adapter nutzt die installierte Claude Code CLI
+    acp_adapter: str = ""  # Befehl des Claude-Code-ACP-Adapters, leer = automatisch
+    agent_command: str = ""  # Startbefehl für einen eigenen ACP-Agenten
+    agent_args: str = ""  # zusätzliche Parameter für den Agenten
+    agent_model: str = ""  # leer = Standard des Agenten
+    permission_policy: str = "ask"  # ask | read | deny | allow
+    mcp_servers: list[dict] = field(default_factory=list)  # [{name, command, args}] – z. B. später TIA
+
     # Walkthroughs
+    show_examples: bool = True  # mitgelieferte Beispiel-Walkthroughs anzeigen
     workflow_dirs: list[str] = field(default_factory=list)  # zusätzliche Ordner mit *.yaml
 
     # Erweitert
@@ -61,7 +79,8 @@ class Settings:
 
     @property
     def workflow_paths(self) -> list[Path]:
-        return [user_workflow_dir(), *(Path(p) for p in self.workflow_dirs if p.strip())]
+        builtin = [builtin_workflow_dir()] if self.show_examples else []
+        return [*builtin, user_workflow_dir(), *(Path(p) for p in self.workflow_dirs if p.strip())]
 
     @property
     def resolved_chat_url(self) -> str:
@@ -71,6 +90,8 @@ class Settings:
 
     @property
     def backend_label(self) -> str:
+        if self.backend == "acp":
+            return {"claude-code": "Claude Code", "copilot": "Copilot CLI"}.get(self.agent, "ACP-Agent")
         return {"chat": "Copilot Chat", "copilot-cli": "Copilot CLI", "demo": "Demo-Modus"}.get(
             self.backend, self.backend)
 

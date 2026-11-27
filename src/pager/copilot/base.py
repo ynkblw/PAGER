@@ -1,4 +1,4 @@
-"""Gemeinsame Schnittstelle für automatische Backends (Copilot CLI, Demo).
+"""Gemeinsame Schnittstelle für automatische Backends (KI-Agent über ACP, Copilot CLI, Demo).
 
 Der Standard-Modus „Copilot Chat“ ist bewusst kein Backend: Dort übergibt der Nutzer den
 Prompt selbst per Zwischenablage (siehe ``ui/pages/handoff.py``).
@@ -38,6 +38,10 @@ class BackendStatus:
 
 
 class RunHandle(ABC):
+    #: Wird bei Freigabe-Anfragen des Agenten aufgerufen (aus dem Hintergrund-Thread). Ohne
+    #: Handler lehnt das ACP-Backend Werkzeuge ab.
+    permission_handler = None
+
     @abstractmethod
     def stream(self) -> Iterator[str]:
         """Liefert die Antwort in Text-Stücken. Wirft ``BackendError`` oder ``RunCancelled``."""

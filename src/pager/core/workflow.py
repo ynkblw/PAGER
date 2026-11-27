@@ -150,15 +150,61 @@ class Question(BaseModel):
         return str(value)
 
 
+StepKind = Literal["questions", "agent"]
+
+
+class AgentStepConfig(BaseModel):
+    """Einstellungen eines Agent-Fensters: direkter Dialog mit dem KI-Agenten (roher Output + Eingabe)."""
+
+    prompt: str = ""  # Startnachricht (Jinja2, kennt alle bisherigen Antworten); leer = Nutzer beginnt
+    auto_start: bool = True  # Startnachricht beim Öffnen automatisch senden
+    require_reply: bool = True  # „Weiter“ erst, wenn der Agent mindestens einmal geantwortet hat
+    placeholder: str = ""  # Hinweis im Eingabefeld
+
+    # Anzeige: welche Bestandteile des Fensters sichtbar sind
+    show_status: bool = True  # Statuszeile (Verbindung, Agent, Abbrechen)
+    show_controls: bool = True  # Auswahl von Modus und Modell (falls der Agent sie anbietet)
+    show_thoughts: bool = True  # Gedanken des Agenten
+    show_tools: bool = True  # Werkzeugaufrufe und Freigabe-Hinweise im Verlauf
+    show_plan: bool = True  # Plan des Agenten
+    show_system: bool = True  # Systemhinweise („Verbunden“, „Ende der Antwort“)
+    show_input: bool = True  # Eingabefeld für eigene Nachrichten
+    raw_toggle: bool = False  # Knopf „Rohdaten“ (ACP/JSON-RPC) anbieten
+    show_raw: bool = False  # Rohdaten von Anfang an einblenden
+
+
 class Step(BaseModel):
     id: str
     title: str
     description: str = ""
+    kind: StepKind = "questions"
     questions: list[Question] = Field(default_factory=list)
+    agent: AgentStepConfig | None = None
     show_if: Condition | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "Step":
+        if self.kind == "agent":
+            if self.questions:
+                raise ValueError(f"Schritt '{self.id}': Ein Agent-Fenster enthält keine Fragen.")
+            self.agent = self.agent or AgentStepConfig()
+        return self
+
+    @property
+    def is_agent(self) -> bool:
+        return self.kind == "agent"
 
     def is_visible(self, answers: dict[str, Any]) -> bool:
         return self.show_if is None or self.show_if.evaluate(answers)
+
+
+def agent_display(value: Any) -> str:
+    """Kurzfassung des Ergebnisses eines Agent-Fensters (für Überprüfung und Tabelle)."""
+    if not isinstance(value, dict) or not value.get("nachrichten"):
+        return "–"
+    reply = " ".join(str(value.get("antwort", "")).split())
+    n = value["nachrichten"]
+    return f"{n} Antwort{'en' if n != 1 else ''} · „{reply[:160]}{'…' if len(reply) > 160 else ''}“"
 
 
 class Workflow(BaseModel):
@@ -169,6 +215,7 @@ class Workflow(BaseModel):
     order: int = 100  # Sortierung auf der Startseite (kleiner = weiter vorne)
     icon: str = "🤖"
     color: str = "#3A6FF8"
+    background: str = ""  # Hintergrundfarbe der Kachel auf der Startseite, leer = weiß
     version: str = "0.1"
     owner: str = ""
     steps: list[Step]
@@ -186,6 +233,11 @@ class Workflow(BaseModel):
                     f"Schritt '{step.id}': show_if verweist auf unbekannte/spätere Frage "
                     f"'{step.show_if.question}'."
                 )
+            if step.is_agent:
+                # Das Ergebnis eines Agent-Fensters steht unter der Schritt-ID in den Antworten
+                if step.id in seen:
+                    raise ValueError(f"Agent-Fenster '{step.id}': ID ist bereits als Frage-ID vergeben.")
+                seen.add(step.id)
             for q in step.questions:
                 if q.id in seen:
                     raise ValueError(f"Frage-ID '{q.id}' ist doppelt vergeben.")
@@ -201,6 +253,14 @@ class Workflow(BaseModel):
     def questions(self) -> list[Question]:
         return [q for s in self.steps for q in s.questions]
 
+    @property
+    def agent_steps(self) -> list[Step]:
+        return [s for s in self.steps if s.is_agent]
+
+    @property
+    def has_agent_steps(self) -> bool:
+        return any(s.is_agent for s in self.steps)
+
     def question(self, qid: str) -> Question:
         for q in self.questions:
             if q.id == qid:
@@ -214,6 +274,8 @@ class Workflow(BaseModel):
         """Nur Antworten auf Fragen, die beim aktuellen Stand sichtbar sind."""
         result = {}
         for step in self.visible_steps(answers):
+            if step.is_agent and step.id in answers:
+                result[step.id] = answers[step.id]
             for q in step.questions:
                 if q.is_visible(answers) and q.id in answers:
                     result[q.id] = answers[q.id]

@@ -2,11 +2,14 @@
 
 # PAGER
 
-**Geführte Prompts für GitHub Copilot – ohne Prompt-Engineering-Kenntnisse.**
+**Geführte Prompts und KI-Agenten – ohne Prompt-Engineering-Kenntnisse.**
 
-PAGER führt Schritt für Schritt durch alle Angaben, die für eine gute Copilot-Antwort nötig sind,
+PAGER führt Schritt für Schritt durch alle Angaben, die für eine gute KI-Antwort nötig sind,
 und baut daraus einen fertigen Prompt. Hochgeladene Dateien werden direkt eingebettet. Der
-Prompt geht an Copilot Chat, die Antwort landet im Verlauf und lässt sich als PDF exportieren.
+Prompt geht an Copilot Chat oder über das **Agent Client Protocol (ACP)** direkt an einen
+KI-Agenten (heute Claude Code, später die GitHub Copilot CLI). In **Agent-Fenstern** sieht man den
+rohen Output des Agenten und schreibt ihm direkt. Die Antwort landet im Verlauf und lässt sich als
+PDF exportieren.
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/UI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white)
@@ -32,6 +35,8 @@ Prompt geht an Copilot Chat, die Antwort landet im Verlauf und lässt sich als P
 - [Prompt-Vorlagen](#prompt-vorlagen)
 - [Dateien & Anhänge](#dateien--anhänge)
 - [Übergabe-Modi](#übergabe-modi)
+- [KI-Agent über ACP](#ki-agent-über-acp)
+- [Agent-Fenster](#agent-fenster)
 - [Daten & Ablage](#daten--ablage)
 - [Architektur](#architektur)
 - [Entwicklung](#entwicklung)
@@ -56,8 +61,9 @@ PAGER macht aus einem bewährten Prompt einen **geführten Walkthrough**:
 | Jeder formuliert anders, die Ergebnisse sind nicht vergleichbar | Einheitliche Vorlage für das ganze Team |
 | Antworten verschwinden im Chatverlauf | Verlauf mit Angaben, Prompt und Antwort sowie PDF-Export |
 
-**Wichtig:** PAGER braucht **nur Zugriff auf Copilot Chat**. Custom Agents, eigene
-Repositories, Copilot CLI und Admin-Rechte sind nicht nötig.
+**Wichtig:** Im Standardmodus braucht PAGER **nur Zugriff auf Copilot Chat**. Custom Agents, eigene
+Repositories, Copilot CLI und Admin-Rechte sind nicht nötig. Der Modus
+[KI-Agent über ACP](#ki-agent-über-acp) ist optional.
 
 ## So funktioniert es
 
@@ -72,7 +78,7 @@ flowchart LR
     G --> H[📄 Verlauf ·<br/>PDF · Markdown]
 ```
 
-1. **Walkthrough wählen.** Die Startseite zeigt alle Walkthroughs des Teams als Kacheln.
+1. **Walkthrough wählen.** Die Seite **Start** zeigt alle Walkthroughs des Teams als Kacheln.
 2. **Fragen beantworten.** Schritt für Schritt, mit Pflichtfeldern, Hilfetexten und Fragen, die
    nur bei bestimmten Antworten erscheinen.
 3. **Prompt erstellen.** PAGER füllt die Prompt-Vorlage aus, bettet Dateiinhalte ein und kopiert
@@ -88,7 +94,7 @@ flowchart LR
 <tr><td width="50%" valign="top">
 
 **Für Anwender**
-- Übersicht aller Walkthroughs mit Suche und Kategorien
+- Startseite mit allen Walkthroughs als Kacheln, nach Kategorien gruppiert und farbig hinterlegbar
 - Assistent mit Schritt-Anzeige, Pflichtfeldern und Prüfung der Eingaben
 - 11 Eingabetypen von Text über Zahl, Auswahl, Skala und Datum bis Datei-Upload
 - Bedingte Fragen („nur anzeigen, wenn …“)
@@ -97,6 +103,8 @@ flowchart LR
 - Verlauf aller Läufe, Fortsetzen offener Übergaben
 - Export als PDF oder Markdown
 - „Angaben anpassen“, um einen Lauf mit geänderten Antworten zu wiederholen
+- **Agent-Fenster:** roher Output des KI-Agenten, direkte Nachrichten, Rückfragen per Pfeiltasten,
+  Werkzeug-Freigaben
 
 </td><td width="50%" valign="top">
 
@@ -110,6 +118,8 @@ flowchart LR
 - Testlauf vor dem Speichern
 - Umbenennen ohne Bruch: Bedingungen und Prompt werden automatisch angepasst
 - Ablage lokal oder in einem geteilten Ordner wie einem Netzlaufwerk
+- Schritte vom Typ **Agent-Fenster** mit Startnachricht aus den bisherigen Antworten; jeder
+  Bestandteil des Fensters lässt sich ein- und ausblenden, mit Live-Vorschau
 
 </td></tr>
 </table>
@@ -149,11 +159,11 @@ uv run pytest    # Tests ausführen
 
 ## Einrichtung
 
-**Einstellungen → Verbindung zu GitHub Copilot**
+**Einstellungen → Verbindung zur KI**
 
 | Feld | Beschreibung | Beispiel |
 |---|---|---|
-| Übergabe | So kommt der Prompt zu Copilot, siehe [Übergabe-Modi](#übergabe-modi) | `Copilot Chat` |
+| Übergabe | So kommt der Prompt zur KI, siehe [Übergabe-Modi](#übergabe-modi) | `Copilot Chat` |
 | GHE-Adresse | Adresse eurer GitHub-Enterprise-Instanz, leer = github.com | `https://<instanz>.ghe.com` |
 | Copilot Chat | Seite, die nach dem Kopieren geöffnet wird, leer = `<GHE-Adresse>/copilot` | – |
 
@@ -162,16 +172,19 @@ Netzlaufwerk, auf dem das Team seine Walkthroughs gemeinsam pflegt.
 
 > Die GHE-Adresse wird nur lokal in den Einstellungen gespeichert und steht nicht im Code.
 
+Für den Modus **KI-Agent über ACP** gibt es eine eigene grafische Einrichtung, siehe
+[KI-Agent über ACP](#ki-agent-über-acp).
+
 ## Walkthroughs erstellen
 
-**Einstellungen → Walkthroughs → ＋ Neuer Walkthrough**, oder über „＋ Neuer Walkthrough“ auf
-der Startseite. Bestehende Walkthroughs öffnet man per Rechtsklick auf die Kachel und
-„Bearbeiten“.
+**Einstellungen → Walkthroughs → ＋ Neuer Walkthrough**. Bestehende Walkthroughs öffnet man dort
+oder per Rechtsklick auf die Kachel und „Bearbeiten“.
 
 | Bereich | Inhalt |
 |---|---|
-| ⚙️ **Allgemein** | Name, Beschreibung, Symbol, Farbe, Kategorie, Speicherort |
+| ⚙️ **Allgemein** | Name, Beschreibung, Symbol, Farbe, Hintergrund der Kachel, Kategorie, Speicherort |
 | 📁 **Schritte** | Eine Seite im Assistenten mit Titel, Beschreibung und optionaler Bedingung |
+| 💬 **Agent-Fenster** | Ein Schritt, der nur aus dem direkten Dialog mit dem KI-Agenten besteht, siehe [Agent-Fenster](#agent-fenster) |
 | ✏️ **Fragen** | Art der Eingabe, Fragetext, Pflichtfeld, Hilfetext, Optionen, Wertebereich, Einheit, Standardwert, Bedingung |
 | 🧩 **Prompt-Vorlage** | Text mit Bausteinen, aus dem der Prompt entsteht |
 
@@ -228,6 +241,9 @@ Antworte als Markdown-Bericht mit Empfehlung, Begründung und offenen Punkten.
 | `{{ dateien_liste }}` | Liste der Unterlagen mit Verweis auf den jeweiligen Anhang |
 | `{{ heute }}` | Heutiges Datum (TT.MM.JJJJ) |
 | `{{ workflow.name }}`, `{{ workflow.description }}` | Name und Beschreibung des Walkthroughs |
+| `{{ agent.<fenster>.antwort }}` | Letzte Antwort des Agenten im Agent-Fenster `<fenster>` |
+| `{{ agent.<fenster>.verlauf }}` | Ganzer Gesprächsverlauf dieses Agent-Fensters (Markdown) |
+| `{{ dateien_pfade }}` | Hochgeladene Dateien mit Pfad im Arbeitsordner (für Agenten, die Dateien selbst lesen) |
 
 Die Vorlagen verwenden die [Jinja2-Syntax](https://jinja.palletsprojects.com/en/stable/templates/).
 Für einfache Vorlagen reichen die Bausteine.
@@ -253,23 +269,141 @@ weil Chat-Eingaben begrenzt sind.
 | Modus | Ablauf | Voraussetzung |
 |---|---|---|
 | **Copilot Chat** *(Standard)* | Prompt in die Zwischenablage, Chat öffnen, Antwort zurück in PAGER einfügen | Zugriff auf Copilot Chat |
-| **Copilot CLI** *(optional)* | PAGER sendet den Prompt automatisch und zeigt die Antwort live an | [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) installiert und freigegeben, Anmeldung per `copilot login --host <GHE-Adresse>` |
-| **Demo** | Antworten werden simuliert | – |
+| **KI-Agent über ACP** | PAGER spricht per [Agent Client Protocol](https://agentclientprotocol.com) direkt mit dem Agenten: Antwort live, Agent-Fenster, Werkzeug-Freigaben | Claude Code **oder** GitHub Copilot CLI, siehe [unten](#ki-agent-über-acp) |
+| **Copilot CLI – Einzelaufruf** *(alt)* | `copilot -p "Lies @AUFTRAG.md …" --silent` im Arbeitsordner, ohne Rückfragen | GitHub Copilot CLI |
+| **Demo** | Antworten und Agent-Fenster werden simuliert | – |
 
-Im CLI-Modus ruft PAGER `copilot -p "Lies @AUFTRAG.md …" --silent` im Arbeitsordner des Laufs
-auf. Custom Agents oder Repositories werden auch dafür nicht benötigt.
+## KI-Agent über ACP
+
+Das [Agent Client Protocol](https://agentclientprotocol.com) (ACP) ist ein offener Standard, über
+den Programme mit KI-Agenten sprechen: JSON-RPC über stdin/stdout. PAGER ist dabei der *Client*
+(wie ein Editor). Weil Claude Code und die GitHub Copilot CLI dasselbe Protokoll sprechen, lässt
+sich der Agent später ohne Änderungen an PAGER oder an den Walkthroughs austauschen.
+
+| Agent | So startet PAGER ihn | Anmeldung |
+|---|---|---|
+| **Claude Code** *(aktuell)* | offizieller Adapter [`claude-agent-acp`](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp); nutzt die installierte Claude Code CLI (`CLAUDE_CODE_EXECUTABLE`) | `claude auth login` |
+| **GitHub Copilot CLI** *(geplant)* | `copilot --acp`, GHE-Host per `COPILOT_GH_HOST` | `copilot login --host <GHE-Adresse>` |
+| **Eigener Agent** | beliebiger ACP-fähiger Befehl | – |
+
+**Einrichtung (Einstellungen → Übergabe: „KI-Agent über ACP“)**
+
+1. **Agent wählen.** Claude Code, GitHub Copilot CLI oder eigener Agent.
+2. **Einrichtung prüfen.** PAGER prüft CLI, Version, ACP-Adapter und Anmeldung und zeigt bei jedem
+   Punkt, was fehlt. Die Knöpfe **Installieren …** und **Anmelden …** öffnen ein Terminalfenster mit
+   dem passenden Befehl.
+3. **Verbindung testen.** Startet den Agenten, öffnet eine ACP-Sitzung und beendet sie wieder.
+   Dabei wird keine Nachricht an die KI geschickt. Angezeigt werden Agent, Version, Modi und Modelle.
+4. **Freigaben festlegen.** Regel für Werkzeugaufrufe des Agenten:
+
+   | Regel | Verhalten |
+   |---|---|
+   | Jedes Mal nachfragen *(Standard)* | PAGER zeigt jede Anfrage mit den Optionen des Agenten an |
+   | Lesen automatisch erlauben | Lesen, Suchen und Nachdenken ohne Rückfrage, sonst nachfragen |
+   | Alle Werkzeuge ablehnen | Agent antwortet nur mit Text |
+   | Alles automatisch erlauben | keine Rückfragen (Vorsicht) |
+
+5. Optional: **Modell**, **Parameter**, **Zeitlimit** und **MCP-Server**. MCP-Server werden jeder
+   Sitzung mitgegeben, zum Beispiel später der TIA-MCP-Server.
+
+Der Adapter für Claude Code braucht Node.js. Ist er nicht installiert, startet PAGER ihn über
+`npx -y @agentclientprotocol/claude-agent-acp`; der erste Start dauert dann etwas länger. Schneller
+geht es mit `npm install -g @agentclientprotocol/claude-agent-acp` (Knopf **Installieren …**).
+
+PAGER bietet dem Agenten über ACP bewusst **keinen** eigenen Datei- oder Terminalzugriff an. Der
+Agent arbeitet mit seinen eigenen Werkzeugen im Arbeitsordner des Laufs, und jede Freigabe läuft
+über PAGER. Angeboten werden dagegen **Rückfragen als Formular** (ACP `elicitation/create`).
+Darüber stellt Claude Code seine Auswahlfragen (`AskUserQuestion`), die Copilot CLI ihre
+`ask_user`-Fragen. Ohne diese Fähigkeit schaltet der Claude-Adapter das Rückfrage-Werkzeug ab.
+
+## Agent-Fenster
+
+Ein Schritt im Walkthrough kann statt Fragen ein **Agent-Fenster** sein: der direkte Draht zum
+KI-Agenten.
+
+- Der **rohe Output** erscheint so, wie er ankommt: Antworttext, Gedanken, Werkzeugaufrufe, Plan
+  und Freigabe-Anfragen.
+- **Rückfragen** des Agenten erscheinen als Auswahlliste: `↑`/`↓` wählen, `Leertaste` kreuzt bei
+  Mehrfachauswahl an, `Enter` antwortet. Darunter steht ein Feld für eine eigene Antwort.
+  „Überspringen“ teilt dem Agenten mit, dass keine Antwort kommt.
+- Optional blendet der Knopf **Rohdaten** jede ACP-Nachricht ein (`→` an den Agenten, `←` vom
+  Agenten, `!` Fehlerausgabe). Er ist standardmäßig aus.
+- Unten schreibt man dem Agenten direkt (`Strg+Enter` sendet). **Abbrechen** stoppt die laufende
+  Antwort.
+- Bietet der Agent Modi oder Modelle an, lassen sie sich im Fenster umschalten.
+- Freigabe-Anfragen erscheinen direkt im Fenster, mit den Optionen des Agenten.
+
+Im Editor legt man es über **＋ Schritt ▾ → 💬 Agent-Fenster** an. Einstellungen:
+
+| Einstellung | Bedeutung |
+|---|---|
+| Startnachricht | Erste Nachricht an den Agenten, mit denselben Bausteinen wie die Prompt-Vorlage. Leer = der Nutzer beginnt |
+| Automatisch senden | Startnachricht beim Öffnen sofort senden (sonst per Knopf) |
+| „Weiter“ erst nach Antwort | Der Schritt gilt erst als erledigt, wenn der Agent geantwortet hat |
+| Eingabehinweis | Grauer Text im leeren Eingabefeld |
+
+Unter **Anzeige** legt man fest, welche Bestandteile sichtbar sind. Eine Live-Vorschau mit
+Beispielinhalt zeigt die Wirkung sofort.
+
+| Bestandteil | YAML-Schlüssel | Standard |
+|---|---|---|
+| Statuszeile (Status, Agent, „Abbrechen“) | `show_status` | an |
+| Modus/Modell-Wahl (falls angeboten) | `show_controls` | an |
+| Gedanken des Agenten | `show_thoughts` | an |
+| Werkzeugaufrufe und Freigabe-Hinweise | `show_tools` | an |
+| Plan | `show_plan` | an |
+| Systemhinweise („Verbunden“, „Ende der Antwort“) | `show_system` | an |
+| Eingabefeld | `show_input` | an |
+| Knopf „Rohdaten“ | `raw_toggle` | aus |
+| Rohdaten von Anfang an zeigen | `show_raw` | aus |
+
+Antworttext, Rückfragen und Freigabe-Anfragen sind immer sichtbar.
+
+Alle Agent-Fenster eines Laufs teilen sich **eine Sitzung**. Der abschließende Auftrag läuft in
+derselben Sitzung, der Agent kennt also das bisherige Gespräch. Die Verläufe liegen als
+`agent_<schritt>.md` im Arbeitsordner. Ohne ACP-Agent (Modus Copilot Chat) lässt sich der Schritt
+überspringen.
+
+```yaml
+- id: direktkontakt
+  title: Direkter Draht zum Agenten
+  kind: agent
+  agent:
+    prompt: |
+      Prüfe die Angaben zu {{ anzeige.thema }} und stelle Rückfragen.
+    show_thoughts: false    # Anzeige-Schalter, siehe Tabelle oben
+    # auto_start: true, require_reply: true, placeholder: "…"
+```
+
+### Beispiel: „Agent-Direktkontakt (Test)“
+
+PAGER bringt einen vorkonfigurierten Walkthrough mit, um die direkte Kommunikation mit dem Agenten
+zu testen (Kategorie *Test & Einrichtung*):
+
+1. **Vorbereitung:** Thema, Antwortstil und ob ein Werkzeug benutzt werden soll.
+2. **Direkter Draht zum Agenten:** Agent-Fenster. Der Agent stellt sich vor, nennt sein
+   Arbeitsverzeichnis, legt auf Wunsch `pager_test.txt` an (Freigabe-Test) und stellt zum Schluss
+   eine Rückfrage mit Auswahl (Pfeiltasten). Danach kann man frei weiterschreiben.
+3. **Rückmeldung:** Hat es funktioniert? Notizen.
+4. **Abschluss:** Der Agent schreibt in derselben Sitzung ein Testprotokoll.
+
+Mitgelieferte Beispiele sind schreibgeschützt: **Bearbeiten** legt eine eigene Kopie an. Unter
+Einstellungen → Ablage lassen sie sich ausblenden. Im Demo-Modus funktioniert der Walkthrough ohne
+KI. Schreibt man dort `/werkzeug`, simuliert der Demo-Agent eine Freigabe-Anfrage, bei `/frage`
+eine Rückfrage.
 
 ## Daten & Ablage
 
 | Was | Wo (Windows) | Inhalt |
 |---|---|---|
-| Einstellungen | `%APPDATA%\PAGER\settings.json` | Übergabe-Modus, GHE-Adresse, Ordner |
+| Einstellungen | `%APPDATA%\PAGER\settings.json` | Übergabe-Modus, GHE-Adresse, Agent, Freigaben, MCP-Server, Ordner |
 | Eigene Walkthroughs | `%APPDATA%\PAGER\workflows\*.yaml` | Fragebogen und Prompt-Vorlage |
 | Geteilte Walkthroughs | frei wählbar (Einstellungen → Ablage) | z. B. Netzlaufwerk des Teams |
-| Verlauf | `%LOCALAPPDATA%\PAGER\runs\<datum>_<walkthrough>\` | `AUFTRAG.md` (Prompt), `eingaben/` (Kopien der Dateien), Ergebnis, `meta.json` |
+| Verlauf | `%LOCALAPPDATA%\PAGER\runs\<datum>_<walkthrough>\` | `AUFTRAG.md` (Prompt), `eingaben/` (Kopien der Dateien), `agent_<schritt>.md` (Verläufe), Ergebnis, `meta.json` |
 
 PAGER selbst sendet keine Daten ins Netz. Die Übergabe an Copilot übernimmt im Chat-Modus der
-Nutzer selbst. Es gelten die Copilot-Richtlinien eurer Organisation.
+Nutzer selbst. Im ACP-Modus sendet der gewählte Agent (Claude Code / Copilot CLI) die Daten an
+seinen Dienst. Es gelten die KI-Richtlinien eurer Organisation.
 
 <details>
 <summary><b>Walkthrough-Dateiformat (YAML)</b></summary>
@@ -284,6 +418,7 @@ description: Bewertet einen Lieferanten anhand von Angaben und Unterlagen.
 category: Einkauf
 icon: 🚚
 color: '#1F9D6B'
+background: '#E3F5EC'   # optional: Kachel farbig hinterlegen
 steps:
 - id: grunddaten
   title: Grunddaten
@@ -332,14 +467,22 @@ src/pager/
 │   ├── prompting.py         Prompt bauen: Jinja2-Vorlage + eingebettete Anhänge
 │   ├── extract.py           Text aus Excel / PDF / Word / Textdateien
 │   └── workspace.py         Arbeitsordner je Lauf, Verlauf
-├── copilot/               Automatische Backends (gemeinsame Schnittstelle)
-│   ├── cli.py               GitHub Copilot CLI: Subprozess, Streaming, Abbruch, Timeout
+├── agent/                 KI-Agenten über ACP (UI-unabhängig, getestet)
+│   ├── acp.py               ACP-Client: JSON-RPC über stdio, Sitzung, Updates, Freigaben, Rückfragen, Abbruch
+│   ├── session.py           Sitzungs-Schnittstelle, Gesprächsverlauf
+│   ├── events.py            Ereignisse (Text, Werkzeug, Freigabe, Rohdaten …) und Freigabe-Regeln
+│   ├── profiles.py          Claude Code / Copilot CLI / eigener Agent: Start, Prüfung, Anmeldung
+│   └── demo.py              Simulierter Agent
+├── copilot/               Backends für den abschließenden Auftrag (gemeinsame Schnittstelle)
+│   ├── acp_backend.py       KI-Agent über ACP (nutzt die Sitzung des Agent-Fensters weiter)
+│   ├── cli.py               GitHub Copilot CLI, Einzelaufruf (alt)
 │   └── demo.py              Simulierte Antworten
+├── resources/workflows/   Mitgelieferte Beispiel-Walkthroughs
 └── ui/                    PySide6-Oberfläche
     ├── main_window.py       Navigation, Abläufe
     ├── theme.py             Farben, Stylesheet
     ├── pages/               home · wizard · handoff · run · history · settings · editor
-    └── widgets/             Eingabefelder je Fragetyp, Stepper, Editor-Bausteine
+    └── widgets/             Eingabefelder, Stepper, Editor-Bausteine, Agent-Fenster, Agent-Einrichtung
 ```
 
 ```mermaid
@@ -355,7 +498,10 @@ flowchart TB
     end
     Wizard --> workflow
     Handoff --> prompting & workspace
+    Wizard --> Console[Agent-Fenster] --> ACP[agent/acp.py]
+    Run --> ACPB[copilot/acp_backend.py] --> ACP
     Run --> CLI[copilot/cli.py] & Demo[copilot/demo.py]
+    ACP -. stdio / JSON-RPC .-> Agent[(Claude Code · Copilot CLI)]
     Editor --> authoring
 ```
 
@@ -367,7 +513,7 @@ flowchart TB
 ## Entwicklung
 
 ```bash
-uv run pytest -q            # 33 Tests: Modell, Editor-Logik, Prompt, Extraktion, CLI (mit Fake-CLI)
+uv run pytest -q            # 51 Tests: Modell, Editor, Prompt, Extraktion, CLI, ACP (mit simuliertem Agenten)
 uv run pager                # App starten
 ```
 
@@ -378,6 +524,10 @@ uv run pager                # App starten
 
 **Neues Backend hinzufügen:** `copilot.base.Backend` implementieren und in
 `copilot/__init__.py` (`create_backend`) sowie `config.BACKENDS` registrieren.
+
+**Weiteren ACP-Agenten fest einbauen:** in `agent/profiles.py` ein Profil in `AGENTS` ergänzen und
+in `build_launch` (Startbefehl), `run_checks` (Einrichtungsprüfung) und `login_command` behandeln.
+Für einen einmaligen Test reicht „Eigener ACP-Agent“ in den Einstellungen.
 
 ## Build & Verteilung
 
@@ -391,11 +541,14 @@ Softwareverteilung.
 
 ## Roadmap
 
+- [x] KI-Agent über ACP (Claude Code) mit Agent-Fenster und Freigaben
+- [ ] Umstellung auf die GitHub Copilot CLI (`copilot --acp`) auf der Ziel-GHE
+- [ ] TIA-Integration über Agent-Fenster und TIA-MCP-Server
 - [ ] Praxistest auf der Ziel-GHE mit echten Walkthroughs
 - [ ] Rechte für geteilte Ordner (nur lesen / bearbeiten), Versionierung und Freigabe von Walkthroughs
 - [ ] Walkthrough-Vorlagen und -Galerie zum schnellen Start
 - [ ] Strukturierte Antworten (z. B. Tabellen) → Excel-Export
-- [ ] Mehrstufige Dialoge (Rückfragen in derselben Chat-Sitzung)
+- [x] Mehrstufige Dialoge (Agent-Fenster, gemeinsame ACP-Sitzung)
 - [ ] Installer (MSI), Auto-Update, Firmen-Theme (Logo, Farben) konfigurierbar
 - [ ] Englische Oberfläche
 
@@ -429,7 +582,7 @@ auf Wunsch den Ordner mit den Dateien, damit man sie im Chat selbst anhängen ka
 
 Einen gemeinsamen Ordner (z. B. ein Netzlaufwerk) unter **Einstellungen → Ablage** eintragen.
 Im Editor wählt man beim Anlegen diesen Ordner als **Speicherort**. Alle Kollegen mit demselben
-Ordner sehen den Walkthrough nach „Neu laden“.
+Ordner sehen den Walkthrough, sobald sie die Seite **Start** öffnen.
 </details>
 
 ---

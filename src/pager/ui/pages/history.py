@@ -20,6 +20,7 @@ STATUS = {
     "cancelled": "⏹ Abgebrochen",
     "running": "⏳ Unterbrochen",  # beim Laden kein Lauf aktiv → wurde nicht sauber beendet
     "waiting": "📋 Wartet auf Antwort",
+    "agent": "💬 Agent-Fenster offen",  # PAGER wurde während eines Agent-Fensters beendet
 }
 
 

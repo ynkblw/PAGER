@@ -1,4 +1,4 @@
-"""Automatische Ausführung (Copilot CLI / Demo): Prompt erstellen, senden, Antwort live anzeigen."""
+"""Automatische Ausführung (KI-Agent über ACP / Copilot CLI / Demo): Prompt senden, Antwort live anzeigen."""
 
 from __future__ import annotations
 
@@ -22,21 +22,25 @@ from pager.core.workspace import PROMPT_FILE, RunWorkspace
 from pager.ui.markdown_view import CSS as MARKDOWN_CSS
 from pager.ui.markdown_view import to_html
 from pager.ui.theme import shadow
+from pager.agent.events import QuestionRequest
+from pager.ui.widgets.agent_console import PermissionPanel, QuestionPanel
 from pager.ui.widgets.common import Banner, Card, button, label
-
 
 
 class RunWorker(QObject):
     status = Signal(str)
+    permission = Signal(object)  # PermissionRequest
     chunk = Signal(str)
     warning = Signal(str)
     done = Signal()
     failed = Signal(str)
     cancelled = Signal()
 
-    def __init__(self, settings: Settings, wf: Workflow, answers: dict[str, Any], ws: RunWorkspace):
+    def __init__(self, settings: Settings, wf: Workflow, answers: dict[str, Any], ws: RunWorkspace,
+                 session=None):
         super().__init__()
         self.settings, self.wf, self.answers, self.ws = settings, wf, answers, ws
+        self.session = session  # laufende Agent-Sitzung aus dem Agent-Fenster (optional)
         self.handle = None
         self._cancel_requested = False
 
@@ -50,7 +54,7 @@ class RunWorker(QObject):
             if self._cancel_requested:
                 raise RunCancelled()
 
-            backend = create_backend(self.settings)
+            backend = create_backend(self.settings, self.session)
             request = RunRequest(
                 workspace=self.ws.root,
                 prompt_file=PROMPT_FILE,
@@ -61,9 +65,11 @@ class RunWorker(QObject):
                          for q in self.wf.questions if q.id in self.answers],
             )
             self.handle = backend.start(request)
+            self.handle.permission_handler = self.permission.emit
             if self._cancel_requested:
                 raise RunCancelled()
-            self.status.emit("Copilot arbeitet …")
+            who = self.settings.backend_label if self.settings.backend == "acp" else "Copilot"
+            self.status.emit(f"{who} arbeitet …")
             for piece in self.handle.stream():
                 self.chunk.emit(piece)
             self.done.emit()
@@ -97,6 +103,7 @@ class RunPage(QWidget):
         self.worker: RunWorker | None = None
         self.started_at = 0.0
         self.warnings: list[str] = []
+        self.agent_ctx = None  # vom Assistenten übernommener Arbeitsordner + Sitzung
 
         root = QVBoxLayout(self)
         root.setContentsMargins(32, 22, 32, 22)
@@ -127,6 +134,10 @@ class RunPage(QWidget):
 
         self.banner = Banner()
         root.addWidget(self.banner)
+        self.permission = PermissionPanel()
+        root.addWidget(self.permission)
+        self.question = QuestionPanel()
+        root.addWidget(self.question)
 
         card = Card(margins=6)
         shadow(card, blur=20, y=2, alpha=12)
@@ -166,15 +177,17 @@ class RunPage(QWidget):
     def is_running(self) -> bool:
         return self.thread is not None
 
-    def start(self, wf: Workflow, answers: dict[str, Any]):
+    def start(self, wf: Workflow, answers: dict[str, Any], agent_ctx=None):
         self.wf, self.answers = wf, answers
+        self.agent_ctx = agent_ctx
         self.text = ""
         self.warnings = []
         self.icon.setText(wf.icon)
         self.title.setText(wf.name)
         self.banner.show_message("info", "")
         self._render()
-        self.ws = RunWorkspace.create(self.settings.runs_path, wf)
+        self.ws = agent_ctx.ws if agent_ctx else RunWorkspace.create(self.settings.runs_path, wf)
+        session = agent_ctx.session if agent_ctx and self.settings.backend == "acp" else None
         self.ws.write_meta(
             workflow_id=wf.id, workflow_name=wf.name, icon=wf.icon,
             created=dt.datetime.now().isoformat(timespec="seconds"),
@@ -183,11 +196,12 @@ class RunPage(QWidget):
             title=self._run_title(wf, answers),
         )
 
-        self.worker = RunWorker(self.settings, wf, answers, self.ws)
+        self.worker = RunWorker(self.settings, wf, answers, self.ws, session)
         self.thread = QThread(self)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.status.connect(self.status.setText)
+        self.worker.permission.connect(self._on_interaction)
         self.worker.chunk.connect(self._on_chunk)
         self.worker.warning.connect(self._on_warning)
         self.worker.done.connect(self._on_done)
@@ -219,6 +233,13 @@ class RunPage(QWidget):
         self.edit_btn.setEnabled(wf is not None)
 
     # ---- Worker-Signale ------------------------------------------------
+    def _on_interaction(self, request):
+        """Freigabe-Anfrage oder Rückfrage des Agenten während des abschließenden Auftrags."""
+        if isinstance(request, QuestionRequest):
+            self.question.add(request)
+        else:
+            self.permission.add(request)
+
     def _on_chunk(self, piece: str):
         self.text += piece
         if not self.render_timer.isActive():
@@ -235,7 +256,8 @@ class RunPage(QWidget):
                            duration_s=round(time.monotonic() - self.started_at))
         self.status.setText(f"Fertig · Ergebnis gespeichert unter {result.name}")
         if not self.warnings:
-            self.banner.show_message("success", "Copilot hat geantwortet.")
+            who = self.settings.backend_label if self.settings.backend == "acp" else "Copilot"
+            self.banner.show_message("success", f"{who} hat geantwortet.")
         self._finish()
 
     def _on_failed(self, message: str):
@@ -255,6 +277,11 @@ class RunPage(QWidget):
     def _finish(self):
         self.clock.stop()
         self._tick()
+        self.permission.cancel_all()
+        self.question.cancel_all()
+        if self.agent_ctx:
+            self.agent_ctx.close()
+            self.agent_ctx = None
         if self.thread:
             self.thread.quit()
             self.thread.wait(3000)
@@ -264,6 +291,8 @@ class RunPage(QWidget):
 
     # ------------------------------------------------------------------
     def cancel(self):
+        self.permission.cancel_all()
+        self.question.cancel_all()
         if self.worker:
             self.status.setText("Wird abgebrochen …")
             self.cancel_btn.setEnabled(False)
@@ -283,7 +312,8 @@ class RunPage(QWidget):
     def _render(self):
         bar = self.view.verticalScrollBar()
         at_bottom = bar.value() >= bar.maximum() - 30
-        self.view.setHtml(to_html(self.text or "_Warte auf Antwort von Copilot …_"))
+        who = self.settings.backend_label if self.settings.backend == "acp" else "Copilot"
+        self.view.setHtml(to_html(self.text or f"_Warte auf Antwort von {who} …_"))
         if at_bottom and self.is_running:
             bar.setValue(bar.maximum())
 

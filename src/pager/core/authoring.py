@@ -59,10 +59,30 @@ ICONS = [
 ]
 
 COLORS = ["#3A6FF8", "#1F9D6B", "#8A5CF6", "#E8590C", "#D14343", "#0E9AA7", "#B7791F", "#475569"]
+# Helle Hintergründe für Kacheln (gut lesbar mit dunkler Schrift); "" = weiß
+BACKGROUNDS = ["", "#EAF0FF", "#E3F5EC", "#EFE9FE", "#FDEDE2", "#FCE8E8", "#E1F4F5", "#FBF1DC", "#ECEFF4"]
 
-WORKFLOW_KEYS = ["id", "name", "description", "category", "order", "icon", "color", "version", "owner",
+WORKFLOW_KEYS = ["id", "name", "description", "category", "order", "icon", "color", "background", "version", "owner",
                  "output_name", "steps", "prompt"]
-STEP_KEYS = ["id", "title", "description", "show_if", "questions"]
+STEP_KEYS = ["id", "title", "description", "kind", "show_if", "agent", "questions"]
+AGENT_DEFAULTS: dict[str, Any] = {
+    "prompt": "", "auto_start": True, "require_reply": True, "placeholder": "",
+    "show_status": True, "show_controls": True, "show_thoughts": True, "show_tools": True, "show_plan": True,
+    "show_system": True, "show_input": True, "raw_toggle": False, "show_raw": False,
+}
+# Bestandteile des Agent-Fensters, die sich im Editor ein- und ausblenden lassen: (Schlüssel, Text, Hinweis)
+AGENT_DISPLAY: list[tuple[str, str, str]] = [
+    ("show_status", "Statuszeile", "Verbindungsstatus, Name des Agenten, „Abbrechen“"),
+    ("show_controls", "Modus/Modell-Wahl", "nur sichtbar, wenn der Agent Modi/Modelle anbietet"),
+    ("show_thoughts", "Gedanken des Agenten", "grau/kursiv, bevor er antwortet"),
+    ("show_tools", "Werkzeugaufrufe", "z. B. „Datei lesen [fertig]“ und Freigabe-Hinweise"),
+    ("show_plan", "Plan", "Aufgabenliste, die der Agent anlegt"),
+    ("show_system", "Systemhinweise", "„Verbunden“, „Ende der Antwort“"),
+    ("show_input", "Eingabefeld", "ohne Eingabefeld läuft nur die Startnachricht; Rückfragen und "
+                                  "Freigaben erscheinen trotzdem"),
+    ("raw_toggle", "Knopf „Rohdaten“", "ACP-Protokoll (JSON-RPC) bei Bedarf einblenden"),
+    ("show_raw", "Rohdaten von Anfang an zeigen", "für Fehlersuche"),
+]
 QUESTION_KEYS = ["id", "label", "type", "required", "help", "placeholder", "default", "options", "min",
                  "max", "unit", "filter", "scale_labels", "show_if"]
 
@@ -119,6 +139,7 @@ def new_draft() -> dict[str, Any]:
         "order": 100,
         "icon": "🤖",
         "color": COLORS[0],
+        "background": "",
         "output_name": "",
         "steps": [],
         "prompt": "",
@@ -134,6 +155,19 @@ def new_step(draft: dict) -> dict[str, Any]:
     taken = [s["id"] for s in draft["steps"]]
     return {"id": unique_id(slugify(title), taken), "title": title, "description": "",
             "show_if": None, "questions": []}
+
+
+def new_agent_step(draft: dict) -> dict[str, Any]:
+    """Schritt, der nur aus einem Agent-Fenster besteht (roher Output des Agenten + Eingabe)."""
+    title = "Agent-Fenster"
+    taken = [s["id"] for s in draft["steps"]] + question_ids(draft)
+    return {"id": unique_id(slugify(title), taken), "title": title,
+            "description": "", "kind": "agent", "show_if": None, "questions": [],
+            "agent": dict(AGENT_DEFAULTS)}
+
+
+def is_agent_step(step: dict) -> bool:
+    return step.get("kind") == "agent"
 
 
 def new_question(draft: dict, qtype: str = "text", step: dict | None = None) -> dict[str, Any]:
@@ -171,13 +205,19 @@ def normalize_draft(data: dict) -> dict[str, Any]:
     data = copy.deepcopy(data or {})
     draft = new_draft() | {"steps": []}
     draft.update({k: v for k, v in data.items() if k in WORKFLOW_KEYS})
-    for key in ("output_name", "description", "prompt"):
+    for key in ("output_name", "description", "prompt", "background"):
         draft[key] = draft.get(key) or ""
     steps = []
     for s in data.get("steps") or []:
-        step = {"id": "", "title": "", "description": "", "show_if": None, "questions": []}
+        step = {"id": "", "title": "", "description": "", "kind": "questions", "show_if": None,
+                "questions": [], "agent": None}
         step.update({k: v for k, v in s.items() if k in STEP_KEYS})
         step["description"] = step["description"] or ""
+        step["kind"] = step.get("kind") or "questions"
+        if step["kind"] == "agent":
+            step["agent"] = {**AGENT_DEFAULTS, **(step.get("agent") or {})}
+            step["agent"]["prompt"] = step["agent"]["prompt"] or ""
+            step["agent"]["placeholder"] = step["agent"]["placeholder"] or ""
         step["show_if"] = _normalize_condition(step.get("show_if"))
         questions = []
         for qd in s.get("questions") or []:
@@ -237,6 +277,11 @@ def _clean_step(s: dict) -> dict[str, Any]:
         out["description"] = s["description"]
     if s.get("show_if"):
         out["show_if"] = _clean_condition(s["show_if"])
+    if is_agent_step(s):
+        out["kind"] = "agent"
+        agent = s.get("agent") or {}
+        out["agent"] = {k: agent[k] for k in AGENT_DEFAULTS if k in agent and agent[k] != AGENT_DEFAULTS[k]}
+        return out
     out["questions"] = [_clean_question(q) for q in s["questions"]]
     return out
 
@@ -321,7 +366,16 @@ def validate_draft(draft: dict) -> tuple[Workflow | None, list[str]]:
     step_ids: set[str] = set()
     for si, s in enumerate(draft["steps"], 1):
         where = f"Schritt {si} „{s.get('title') or '?'}“"
-        if not s["questions"]:
+        if is_agent_step(s):
+            if not QUESTION_ID_RE.match(s["id"] or ""):
+                errors.append(f"{where}: ID „{s['id']}“ ungültig (Kleinbuchstaben, Ziffern und „_“).")
+            if s["id"] in question_ids(draft):
+                errors.append(f"{where}: ID „{s['id']}“ ist bereits als Frage-ID vergeben.")
+            try:
+                _env.parse((s.get("agent") or {}).get("prompt") or "")
+            except TemplateSyntaxError as exc:
+                errors.append(f"{where} › Startnachricht, Zeile {exc.lineno}: {exc.message}")
+        elif not s["questions"]:
             errors.append(f"{where}: enthält noch keine Frage.")
         if s["id"] in step_ids:
             errors.append(f"{where}: ID „{s['id']}“ ist doppelt vergeben.")
@@ -378,6 +432,18 @@ def _humanize_loc(draft: dict, loc: tuple) -> str:
 
 
 _PROMPT_VARS = r"((?:answers|anzeige|dateien)\.)"
+_AGENT_VARS = r"((?:agent|answers|anzeige)\.)"
+
+
+def rename_agent_step(draft: dict, old: str, new: str) -> None:
+    """Benennt die ID eines Agent-Fensters um und passt Prompt-Vorlage und Startnachrichten an."""
+    if old == new or not old:
+        return
+    pattern = _AGENT_VARS + re.escape(old) + r"\b"
+    draft["prompt"] = re.sub(pattern, r"\g<1>" + new, draft.get("prompt") or "")
+    for s in draft["steps"]:
+        if is_agent_step(s) and s.get("agent"):
+            s["agent"]["prompt"] = re.sub(pattern, r"\g<1>" + new, s["agent"].get("prompt") or "")
 
 
 def rename_question(draft: dict, old: str, new: str) -> None:
@@ -434,6 +500,9 @@ def sample_answers(draft: dict) -> dict[str, Any]:
     """Beispielantworten, mit denen die Prompt-Vorlage probeweise gerendert wird."""
     answers: dict[str, Any] = {}
     for s in draft["steps"]:
+        if is_agent_step(s):
+            answers[s["id"]] = {"antwort": f"‹Antwort aus „{s['title']}“›",
+                                "verlauf": "**Du:** …\n\n**Agent:** …", "nachrichten": 1}
         for q in s["questions"]:
             t, label = q["type"], q["label"] or q["id"]
             if q.get("default") is not None:

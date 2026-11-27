@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLineEdit, QMenu, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QMenu, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from pager.core.workflow import Workflow, WorkflowLoadError
@@ -30,6 +30,8 @@ class WorkflowCard(QFrame):
         self.setMinimumHeight(230)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         shadow(self, blur=18, y=2, alpha=14)
+        if wf.background:
+            self.setStyleSheet(f"#WorkflowCard {{ background: {wf.background}; }}")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 20, 20, 16)
@@ -53,7 +55,10 @@ class WorkflowCard(QFrame):
 
         bottom = QHBoxLayout()
         n_steps, n_q = len(wf.steps), len(wf.questions)
-        bottom.addWidget(label(f"{n_steps} Schritte · {n_q} Fragen", "Faint"))
+        info = f"{n_steps} Schritte · {n_q} Fragen"
+        if wf.has_agent_steps:
+            info += " · 💬 Agent-Fenster"
+        bottom.addWidget(label(info, "Faint"))
         bottom.addStretch()
         go = button("Starten  →", "primary")
         go.clicked.connect(lambda: self.start.emit(self.wf))
@@ -100,29 +105,6 @@ class HomePage(QWidget):
         lay.setContentsMargins(40, 36, 40, 36)
         lay.setSpacing(18)
 
-        head = QHBoxLayout()
-        titles = QVBoxLayout()
-        titles.setSpacing(4)
-        titles.addWidget(label("Womit soll Copilot dir heute helfen?", "H1"))
-        titles.addWidget(label(
-            "Wähle einen Walkthrough – PAGER fragt alle nötigen Angaben ab und baut daraus einen "
-            "fertigen Prompt für GitHub Copilot.", "Muted", wrap=True))
-        head.addLayout(titles, 1)
-        reload_btn = button("⟳  Neu laden", "ghost", "Walkthroughs neu einlesen")
-        reload_btn.clicked.connect(self.reload_requested)
-        head.addWidget(reload_btn, 0, Qt.AlignTop)
-        new_btn = button("＋  Neuer Walkthrough", "ghost")
-        new_btn.clicked.connect(self.create_requested)
-        head.addWidget(new_btn, 0, Qt.AlignTop)
-        lay.addLayout(head)
-
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("🔍  Walkthroughs durchsuchen …")
-        self.search.setClearButtonEnabled(True)
-        self.search.setMaximumWidth(460)
-        self.search.textChanged.connect(self._render)
-        lay.addWidget(self.search)
-
         self.banner = Banner("warning")
         lay.addWidget(self.banner)
 
@@ -150,16 +132,9 @@ class HomePage(QWidget):
     def _render(self):
         clear_layout(self.sections)
         self.cards = []
-        query = self.search.text().strip().lower()
-        matches = [
-            w for w in self.workflows
-            if not query or query in f"{w.name} {w.description} {w.category}".lower()
-        ]
+        matches = self.workflows
         if not self.workflows:
             self.sections.addWidget(self._empty_state())
-            return
-        if not matches:
-            self.sections.addWidget(label("Keine passenden Walkthroughs gefunden.", "Muted"))
             return
 
         cols = self._columns()

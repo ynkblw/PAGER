@@ -9,14 +9,15 @@ from pydantic import ValidationError
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLineEdit, QMenu, QMessageBox, QPlainTextEdit,
+    QGridLayout, QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLineEdit, QMenu, QMessageBox, QPlainTextEdit,
     QScrollArea, QSizePolicy, QSpinBox, QStackedWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
     QWidget,
 )
 
 from pager.config import Settings, user_workflow_dir
 from pager.core import authoring as A
-from pager.core.workflow import Question
+from pager.core.workflow import AgentStepConfig, Question
+from pager.ui.widgets.agent_console import AgentConsole
 from pager.ui.theme import shadow
 from pager.ui.widgets.common import Banner, Card, button, clear_layout, hline, label
 from pager.ui.widgets.editor_widgets import (
@@ -129,6 +130,9 @@ class GeneralForm(_FormPage):
         self.colors = ColorSwatches()
         lr.addWidget(self.colors, 1)
         _row(self.form, "Symbol & Farbe", look)
+        self.background = ColorSwatches(A.BACKGROUNDS)
+        _row(self.form, "Hintergrund", self.background,
+             "Hinterlegt die Kachel auf der Startseite farbig. Weiß = keine Hinterlegung.")
 
         self.category = QComboBox()
         self.category.setEditable(True)
@@ -158,6 +162,7 @@ class GeneralForm(_FormPage):
         self.description.textChanged.connect(lambda: self._set("description", self.description.toPlainText()))
         self.icon.changed.connect(lambda v: self._set("icon", v))
         self.colors.changed.connect(lambda v: self._set("color", v))
+        self.background.changed.connect(lambda v: self._set("background", v))
         self.category.currentTextChanged.connect(lambda v: self._set("category", v.strip()))
         self.wf_id.textChanged.connect(lambda v: self._set("id", v.strip()))
         self.output.textChanged.connect(lambda v: self._set("output_name", v.strip()))
@@ -173,6 +178,7 @@ class GeneralForm(_FormPage):
         self.description.setPlainText(draft.get("description") or "")
         self.icon.setText(draft.get("icon") or "🤖")
         self.colors.set_color(draft.get("color") or "")
+        self.background.set_color(draft.get("background") or "")
         self.category.clear()
         self.category.addItems(sorted(set(categories) | {draft.get("category") or "Allgemein"}))
         self.category.setCurrentText(draft.get("category") or "Allgemein")
@@ -217,8 +223,15 @@ class GeneralForm(_FormPage):
 
 
 class StepForm(_FormPage):
+    SUBTITLES = {
+        False: "Ein Schritt fasst zusammengehörige Fragen auf einer Seite zusammen.",
+        True: "Ein Agent-Fenster zeigt den rohen Output des KI-Agenten und lässt den Nutzer direkt mit ihm "
+              "schreiben. Das Ergebnis steht danach in der Prompt-Vorlage zur Verfügung. Voraussetzung: "
+              "Übergabe „KI-Agent über ACP“ oder Demo-Modus.",
+    }
+
     def __init__(self):
-        super().__init__("Schritt", "Ein Schritt fasst zusammengehörige Fragen auf einer Seite zusammen.")
+        super().__init__("Schritt", self.SUBTITLES[False])
         self.step: dict = {}
         self.draft: dict = {}
         self.step_title = QLineEdit()
@@ -227,35 +240,141 @@ class StepForm(_FormPage):
         self.description.setFixedHeight(70)
         self.description.setPlaceholderText("Optionaler Erklärungstext oberhalb der Fragen")
         _row(self.form, "Beschreibung", self.description)
+
+        # Agent-Fenster
+        mono = QFont("Consolas")
+        mono.setStyleHint(QFont.Monospace)
+        self.agent_prompt = QPlainTextEdit()
+        self.agent_prompt.setFont(mono)
+        self.agent_prompt.setMinimumHeight(150)
+        self.agent_prompt.setPlaceholderText(
+            "Erste Nachricht an den Agenten, z. B.\nPrüfe die Angaben zu {{ anzeige.<id> }} und stelle Rückfragen.\n\n"
+            "Leer lassen, wenn der Nutzer das Gespräch selbst beginnt.")
+        self.agent_prompt_row = _row(
+            self.form, "Startnachricht", self.agent_prompt,
+            "Bausteine wie in der Prompt-Vorlage: {{ anzeige.<id> }}, {{ answers.<id> }}, "
+            "{{ agent.<fenster>.antwort }}. Hochgeladene Dateien liegen im Arbeitsordner: {{ dateien_pfade }}.")
+        opts = QWidget()
+        ol = QVBoxLayout(opts)
+        ol.setContentsMargins(0, 0, 0, 0)
+        ol.setSpacing(6)
+        self.auto_start = QCheckBox("Startnachricht beim Öffnen automatisch senden")
+        self.require_reply = QCheckBox("„Weiter“ erst nach einer Antwort des Agenten")
+        for w in (self.auto_start, self.require_reply):
+            ol.addWidget(w)
+        self.agent_opts_row = _row(self.form, "Verhalten", opts)
+
+        # Anzeige: Bestandteile des Agent-Fensters ein-/ausblenden
+        disp = QWidget()
+        grid = QGridLayout(disp)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(6)
+        self.display_checks: dict[str, QCheckBox] = {}
+        for i, (key, text, hint) in enumerate(A.AGENT_DISPLAY):
+            box = QCheckBox(text)
+            box.setToolTip(hint)
+            box.toggled.connect(lambda v, k=key: self._set_agent(k, v))
+            grid.addWidget(box, i // 2, i % 2)
+            self.display_checks[key] = box
+        self.agent_display_row = _row(self.form, "Anzeige", disp,
+                                      "Welche Bestandteile das Agent-Fenster zeigt. Antworttext, Rückfragen und "
+                                      "Freigabe-Anfragen sind immer sichtbar. Tooltips erklären die Punkte.")
+        self.agent_placeholder = QLineEdit()
+        self.agent_placeholder.setPlaceholderText("Nachricht an den Agenten … (Strg+Enter sendet)")
+        self.agent_placeholder_row = _row(self.form, "Eingabehinweis", self.agent_placeholder)
+
         self.condition = ConditionEditor("Schritt")
         _row(self.form, "Sichtbarkeit", self.condition)
         adv = _Collapsible("Erweitert")
         self.card.body.addWidget(adv)
         self.step_id = QLineEdit()
-        _row(adv.form, "ID", self.step_id)
+        self.step_id_row = _row(adv.form, "ID", self.step_id)
+
+        # Live-Vorschau des Agent-Fensters
+        self.preview_card = Card(spacing=12, margins=22)
+        self.preview_card.body.addWidget(label("👁  So sieht das Agent-Fenster aus (Beispielinhalt)", "H3"))
+        self.preview_host = QVBoxLayout()
+        self.preview_card.body.addLayout(self.preview_host)
+        self.lay.addWidget(self.preview_card)
+        self.preview_timer = QTimer(self, singleShot=True, interval=200)
+        self.preview_timer.timeout.connect(self._render_preview)
         self.lay.addStretch()
 
         self.step_title.textChanged.connect(self._on_title)
         self.description.textChanged.connect(self._on_desc)
         self.condition.changed.connect(self._on_condition)
         self.step_id.textChanged.connect(self._on_id)
+        self.agent_prompt.textChanged.connect(lambda: self._set_agent("prompt", self.agent_prompt.toPlainText()))
+        self.auto_start.toggled.connect(lambda v: self._set_agent("auto_start", v))
+        self.require_reply.toggled.connect(lambda v: self._set_agent("require_reply", v))
+        self.agent_placeholder.textChanged.connect(lambda v: self._set_agent("placeholder", v))
+
+    @property
+    def is_agent(self) -> bool:
+        return A.is_agent_step(self.step)
 
     def load(self, step: dict, draft: dict, number: int):
         self._loading = True
         self.step, self.draft = step, draft
-        self.title.setText(f"Schritt {number}")
+        agent = self.is_agent
+        self.title.setText(f"{'💬 Agent-Fenster' if agent else 'Schritt'} {number}")
+        self.subtitle.setText(self.SUBTITLES[agent])
         self.step_title.setText(step["title"])
         self.description.setPlainText(step.get("description") or "")
+        self.description.setPlaceholderText("Optionaler Erklärungstext oberhalb des Agent-Fensters" if agent
+                                            else "Optionaler Erklärungstext oberhalb der Fragen")
+        for row in (self.agent_prompt_row, self.agent_opts_row, self.agent_placeholder_row,
+                    self.agent_display_row):
+            self.form.setRowVisible(row, agent)
+        cfg = {**A.AGENT_DEFAULTS, **(step.get("agent") or {})}
+        self.agent_prompt.setPlainText(cfg["prompt"] or "")
+        self.auto_start.setChecked(bool(cfg["auto_start"]))
+        self.require_reply.setChecked(bool(cfg["require_reply"]))
+        for key, box in self.display_checks.items():
+            box.setChecked(bool(cfg[key]))
+        self.agent_placeholder.setText(cfg["placeholder"] or "")
+        self.preview_card.setVisible(agent)
         self.condition.load(step.get("show_if"), A.earlier_questions(draft, step))
         self.step_id.setText(step["id"])
         self._loading = False
+        if agent:
+            self._render_preview()
+
+    def _set_agent(self, key: str, value):
+        if self._loading or not self.is_agent:
+            return
+        self.step.setdefault("agent", dict(A.AGENT_DEFAULTS))[key] = value
+        if key in self.display_checks or key == "placeholder":
+            self.preview_timer.start()
+        self.changed.emit()
+
+    def _render_preview(self):
+        clear_layout(self.preview_host)
+        if not self.is_agent:
+            return
+        cfg = {**A.AGENT_DEFAULTS, **(self.step.get("agent") or {})}
+        try:
+            config = AgentStepConfig.model_validate(cfg)
+        except ValidationError:
+            return
+        console = AgentConsole(config)
+        console.setMinimumHeight(420)
+        console.preview()
+        self.preview_host.addWidget(console)
+
+    def _taken_ids(self) -> list[str]:
+        taken = [s["id"] for s in self.draft["steps"] if s is not self.step]
+        return taken + (A.question_ids(self.draft) if self.is_agent else [])
 
     def _on_title(self, text: str):
         if self._loading:
             return
         if A.is_auto_id(self.step["id"], self.step["title"]):
-            taken = [s["id"] for s in self.draft["steps"] if s is not self.step]
-            self.step["id"] = A.unique_id(A.slugify(text) or "schritt", taken)
+            old = self.step["id"]
+            self.step["id"] = A.unique_id(A.slugify(text) or "schritt", self._taken_ids())
+            if self.is_agent:
+                A.rename_agent_step(self.draft, old, self.step["id"])
             self._loading = True
             self.step_id.setText(self.step["id"])
             self._loading = False
@@ -273,6 +392,8 @@ class StepForm(_FormPage):
 
     def _on_id(self, text: str):
         if not self._loading:
+            if self.is_agent:
+                A.rename_agent_step(self.draft, self.step["id"], text.strip())
             self.step["id"] = text.strip()
             self.changed.emit()
 
@@ -525,7 +646,7 @@ class PromptForm(_FormPage):
     def __init__(self):
         super().__init__(
             "Prompt-Vorlage",
-            "Dieser Text wird mit den Antworten gefüllt und an Copilot Chat übergeben. Klicke auf einen "
+            "Dieser Text wird mit den Antworten gefüllt und an Copilot bzw. den KI-Agenten übergeben. Klicke auf einen "
             "Baustein, um ihn an der Cursorposition einzufügen. Inhalte hochgeladener Dateien werden "
             "automatisch als „Anhänge“ ans Ende gesetzt.")
         self.draft: dict = {}
@@ -577,6 +698,9 @@ class PromptForm(_FormPage):
                  ("📎 Liste der Unterlagen", "{{ dateien_liste }}"),
                  ("📅 Heutiges Datum", "{{ heute }}")]
         for s in draft["steps"]:
+            if A.is_agent_step(s):
+                chips.append((f"💬 {s['title']}: Antwort", f"{{{{ agent.{s['id']}.antwort }}}}"))
+                chips.append((f"💬 {s['title']}: Verlauf", f"{{{{ agent.{s['id']}.verlauf }}}}"))
             for q in s["questions"]:
                 if q["type"] in A.FILE_TYPES:
                     continue
@@ -683,8 +807,17 @@ class WorkflowEditorPage(QWidget):
         outline.body.addWidget(self.tree, 1)
 
         add_row = QHBoxLayout()
-        add_step = button("＋ Schritt")
-        add_step.clicked.connect(self._add_step)
+        add_step = button("＋ Schritt  ▾")
+        add_step.setObjectName("MenuButton")
+        step_menu = QMenu(add_step)
+        step_menu.setToolTipsVisible(True)
+        act = step_menu.addAction("📁   Schritt mit Fragen")
+        act.setToolTip("Eine Seite mit Fragen im Walkthrough")
+        act.triggered.connect(self._add_step)
+        act = step_menu.addAction("💬   Agent-Fenster")
+        act.setToolTip("Roher Output des KI-Agenten mit Eingabefeld – direkter Dialog mit dem Agenten")
+        act.triggered.connect(self._add_agent_step)
+        add_step.setMenu(step_menu)
         self.add_q = button("＋ Frage  ▾", "primary")
         self.add_q.setObjectName("MenuButton")
         menu = QMenu(self.add_q)
@@ -801,7 +934,8 @@ class WorkflowEditorPage(QWidget):
     @staticmethod
     def _step_text(si: int, s: dict) -> str:
         cond = "  ⑂" if s.get("show_if") else ""
-        return f"{si + 1}.  {s['title'] or '(ohne Titel)'}{cond}"
+        icon = "💬 " if A.is_agent_step(s) else ""
+        return f"{si + 1}.  {icon}{s['title'] or '(ohne Titel)'}{cond}"
 
     @staticmethod
     def _question_text(q: dict) -> str:
@@ -871,11 +1005,21 @@ class WorkflowEditorPage(QWidget):
         self.draft["steps"].insert(idx, step)
         self._structure_changed(f"step:{idx}")
 
+    def _add_agent_step(self):
+        step = A.new_agent_step(self.draft)
+        idx = self._current_step_index() + 1
+        self.draft["steps"].insert(idx, step)
+        self._structure_changed(f"step:{idx}")
+
     def _add_question(self, qtype: str):
         if not self.draft["steps"]:
             self.draft["steps"].append(A.new_step(self.draft))
         si = max(0, self._current_step_index())
         step = self.draft["steps"][si]
+        if A.is_agent_step(step):
+            QMessageBox.information(self, "Agent-Fenster", "Ein Agent-Fenster enthält keine Fragen. Füge über "
+                                    "„＋ Schritt“ einen Schritt mit Fragen hinzu.")
+            return
         q = A.new_question(self.draft, qtype, step)
         kind, _, qi = self._parse(self._current_key)
         pos = qi + 1 if kind == "q" else len(step["questions"])
@@ -896,10 +1040,10 @@ class WorkflowEditorPage(QWidget):
             if 0 <= t < len(qs):
                 qs[qi], qs[t] = qs[t], qs[qi]
                 self._structure_changed(f"q:{si}:{t}")
-            elif t < 0 and si > 0:  # in den vorherigen Schritt
+            elif t < 0 and si > 0 and not A.is_agent_step(steps[si - 1]):  # in den vorherigen Schritt
                 steps[si - 1]["questions"].append(qs.pop(qi))
                 self._structure_changed(f"q:{si - 1}:{len(steps[si - 1]['questions']) - 1}")
-            elif t >= len(qs) and si < len(steps) - 1:  # in den nächsten Schritt
+            elif t >= len(qs) and si < len(steps) - 1 and not A.is_agent_step(steps[si + 1]):  # nächster Schritt
                 steps[si + 1]["questions"].insert(0, qs.pop(qi))
                 self._structure_changed(f"q:{si + 1}:0")
 

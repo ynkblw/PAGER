@@ -5,7 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QFont, QIcon, QPalette
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QIcon, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget
 
 RESOURCES = Path(__file__).resolve().parent.parent / "resources"
@@ -38,6 +39,16 @@ C = {
 
 def app_icon() -> QIcon:
     return QIcon(str(RESOURCES / "pager.svg"))
+
+
+def brand_logo(width: int, ratio: float = 1.0) -> QPixmap:
+    """Firmenlogo für die Seitenleiste, scharf auch auf hochauflösenden Bildschirmen."""
+    pix = QPixmap(str(RESOURCES / "atlas-ai.png"))
+    if pix.isNull():
+        return pix
+    scaled = pix.scaledToWidth(int(width * ratio), Qt.SmoothTransformation)
+    scaled.setDevicePixelRatio(ratio)
+    return scaled
 
 
 def shadow(widget: QWidget, blur: int = 24, y: int = 4, alpha: int = 22) -> None:
@@ -86,6 +97,8 @@ QToolTip {{ background: {C['sidebar']}; color: white; border: none; padding: 6px
 #NavButton:checked {{ background: {C['sidebar_active']}; color: white; font-weight: 600; }}
 #NavButton:disabled {{ color: #56627C; }}
 #StatusBox {{ background: {C['sidebar_hover']}; border-radius: 10px; }}
+#BrandBox {{ background: white; border-radius: 10px; }}
+#BrandBox QLabel {{ background: transparent; }}
 #StatusTitle {{ color: white; font-weight: 600; }}
 #StatusText {{ font-size: 8.5pt; }}
 
@@ -250,4 +263,31 @@ QListWidget#WorkflowList::item {{ padding: 10px 8px; border-radius: 7px; }}
 QListWidget#WorkflowList::item:hover {{ background: {C['surface_alt']}; }}
 QListWidget#WorkflowList::item:selected {{ background: {C['accent_soft']}; color: {C['text']}; }}
 QListWidget {{ background: {C['surface']}; border: 1px solid {C['border']}; border-radius: 8px; }}
+
+/* ---------- Agent-Fenster ---------- */
+QPlainTextEdit#AgentOutput {{
+    background: #0F1729; color: #E3E8F2; border: 1px solid #1E2A44; border-radius: 10px; padding: 10px 12px;
+    selection-background-color: #2F5FE0;
+}}
+QPlainTextEdit#AgentRaw {{
+    background: #0B1120; color: #9AA6BF; border: 1px solid #1E2A44; border-radius: 10px; padding: 8px 10px;
+}}
+QPlainTextEdit#AgentInput {{ border-radius: 10px; }}
+QSplitter::handle {{ background: transparent; height: 8px; }}
+#AgentDot {{ font-size: 12pt; color: {C['faint']}; }}
+#AgentDot[state="connecting"] {{ color: {C['warning']}; }}
+#AgentDot[state="ready"] {{ color: {C['success']}; }}
+#AgentDot[state="busy"] {{ color: {C['accent']}; }}
+#AgentDot[state="error"] {{ color: {C['danger']}; }}
+#PermissionPanel {{ background: {C['warning_soft']}; border: 1px solid #F1D9A6; border-radius: 10px; }}
+#PermissionPanel QLabel {{ background: transparent; }}
+#QuestionPanel {{ background: #F3EEFF; border: 1px solid #D6C6FF; border-radius: 10px; }}
+#QuestionPanel QLabel {{ background: transparent; }}
+QListWidget#QuestionList {{ background: white; border: 1px solid #D6C6FF; border-radius: 8px; padding: 3px; }}
+QListWidget#QuestionList::item {{ padding: 6px 8px; border-radius: 6px; }}
+QListWidget#QuestionList::item:selected {{ background: #8A5CF6; color: white; }}
+#SetupBox {{ background: {C['surface_alt']}; border: 1px solid {C['border']}; border-radius: 12px; }}
+#SetupBox QLabel {{ background: transparent; }}
+#CheckRow {{ background: {C['surface']}; border: 1px solid {C['border']}; border-radius: 9px; }}
+#CheckRow QLabel {{ background: transparent; }}
 """

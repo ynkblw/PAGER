@@ -118,19 +118,23 @@ class EmojiButton(QToolButton):
 class ColorSwatches(QWidget):
     changed = Signal(str)
 
-    def __init__(self):
+    def __init__(self, colors: list[str] | None = None):
         super().__init__()
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
         self.buttons: dict[str, QPushButton] = {}
-        for color in COLORS:
+        for color in colors or COLORS:
             b = QPushButton()
             b.setCheckable(True)
             b.setFixedSize(28, 28)
             b.setCursor(Qt.PointingHandCursor)
+            # "" = keine Farbe (weiß mit Rahmen)
+            fill = color or "#FFFFFF"
+            border = "#C9D0DE" if color in ("", "#FFFFFF") or color.startswith(("#E", "#F")) else "white"
+            b.setToolTip("Keine (weiß)" if not color else color)
             b.setStyleSheet(
-                f"QPushButton {{ background: {color}; border: 2px solid white; border-radius: 14px; padding: 0; }}"
+                f"QPushButton {{ background: {fill}; border: 2px solid {border}; border-radius: 14px; padding: 0; }}"
                 f"QPushButton:checked {{ border: 3px solid #18202F; }}")
             b.clicked.connect(lambda _=False, c=color: self._pick(c))
             self.buttons[color] = b

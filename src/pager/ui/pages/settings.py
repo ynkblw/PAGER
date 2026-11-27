@@ -1,4 +1,4 @@
-"""Einstellungen: Walkthroughs verwalten, Übergabe an Copilot (Chat/CLI), Ablage."""
+"""Einstellungen: Walkthroughs verwalten, Übergabe (Copilot Chat / KI-Agent über ACP / CLI), Ablage."""
 
 from __future__ import annotations
 
@@ -8,13 +8,14 @@ import sys
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit, QListWidget,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit, QListWidget,
     QListWidgetItem, QPlainTextEdit, QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from pager.config import BACKENDS, Settings, user_workflow_dir
+from pager.config import BACKENDS, Settings, builtin_workflow_dir, user_workflow_dir
 from pager.core.workflow import Workflow
 from pager.copilot import CopilotCliBackend
+from pager.ui.widgets.agent_setup import AgentSetupPanel
 from pager.ui.widgets.common import Banner, Card, button, label
 
 MODEL_SUGGESTIONS = ["", "auto"]  # weitere Modell-IDs je nach Freigabe in eurer Copilot-Policy
@@ -91,7 +92,7 @@ class SettingsPage(QWidget):
 
         # ---- Verbindung ---------------------------------------------------
         conn = Card()
-        conn.body.addWidget(label("Verbindung zu GitHub Copilot", "H2"))
+        conn.body.addWidget(label("Verbindung zur KI", "H2"))
         form = self._form(conn)
         self.backend = QComboBox()
         for key, text in BACKENDS.items():
@@ -162,6 +163,10 @@ class SettingsPage(QWidget):
         row.addStretch()
         cli.addLayout(row)
         conn.body.addWidget(self.cli_box)
+
+        # KI-Agent über ACP – nur sichtbar, wenn ausgewählt
+        self.agent_panel = AgentSetupPanel(settings, self._apply_connection)
+        conn.body.addWidget(self.agent_panel)
         self.conn_banner = Banner()
         conn.body.addWidget(self.conn_banner)
         root.addWidget(conn)
@@ -179,6 +184,9 @@ class SettingsPage(QWidget):
         self.runs_dir.setPlaceholderText(str(Settings().runs_path))
         form.addRow("Verlauf", self._with_hint(
             self._with_browse(self.runs_dir), "Ordner für Prompts, Unterlagen und Ergebnisse der Läufe."))
+        self.show_examples = QCheckBox("Mitgelieferte Beispiel-Walkthroughs anzeigen")
+        form.addRow("Beispiele", self._with_hint(
+            self.show_examples, f"z. B. „Agent-Direktkontakt (Test)“ · {builtin_workflow_dir()}"))
         root.addWidget(store)
 
         foot = QHBoxLayout()
@@ -198,7 +206,10 @@ class SettingsPage(QWidget):
         self.wf_list.clear()
         for wf in workflows:
             n = len(wf.questions)
-            item = QListWidgetItem(f"{wf.icon}   {wf.name}      ·  {wf.category}  ·  {n} Fragen")
+            extra = f"  ·  💬 {len(wf.agent_steps)} Agent-Fenster" if wf.has_agent_steps else ""
+            builtin = wf.source and wf.source.parent.resolve() == builtin_workflow_dir().resolve()
+            item = QListWidgetItem(f"{wf.icon}   {wf.name}      ·  {wf.category}  ·  {n} Fragen{extra}"
+                                   + ("  ·  Beispiel" if builtin else ""))
             item.setData(Qt.UserRole, wf.id)
             item.setToolTip(str(wf.source))
             self.wf_list.addItem(item)
@@ -289,6 +300,9 @@ class SettingsPage(QWidget):
         self.extra_args.setText(shlex.join(s.cli_extra_args))
         self.timeout.setValue(s.timeout_minutes)
         self.runs_dir.setText(s.runs_dir)
+        self.show_examples.setChecked(s.show_examples)
+        self.agent_panel.load()
+        self.timeout.setValue(s.timeout_minutes)
         self.conn_banner.show_message("info", "")
         self.save_banner.show_message("info", "")
         self._update_mode()
@@ -301,16 +315,26 @@ class SettingsPage(QWidget):
             self.save_banner.show_message("error", f"CLI-Parameter ungültig: {exc}")
             return False
         s = self.settings
-        s.backend = self.backend.currentData()
-        s.ghe_host = self.host.text().strip().rstrip("/")
-        s.copilot_path = self.exe.text().strip()
+        if error := self.agent_panel.apply(s):
+            self.save_banner.show_message("error", error)
+            return False
+        self._apply_connection(s)
+        if s.backend == "copilot-cli":
+            s.copilot_path = self.exe.text().strip()
         s.model = self.model.currentText().strip()
         s.chat_url = self.chat_url.text().strip()
         s.workflow_dirs = [l.strip() for l in self.wf_dirs.toPlainText().splitlines() if l.strip()]
         s.cli_extra_args = extra
-        s.timeout_minutes = self.timeout.value()
+        if s.backend == "copilot-cli":
+            s.timeout_minutes = self.timeout.value()
         s.runs_dir = self.runs_dir.text().strip()
+        s.show_examples = self.show_examples.isChecked()
         return True
+
+    def _apply_connection(self, s: Settings) -> None:
+        """Übergabe-Modus und GHE-Adresse (auch für Prüfungen des Agent-Panels)."""
+        s.backend = self.backend.currentData()
+        s.ghe_host = self.host.text().strip().rstrip("/")
 
     def save(self):
         if not self._apply():
@@ -328,15 +352,19 @@ class SettingsPage(QWidget):
         "chat": "PAGER kopiert den fertigen Prompt in die Zwischenablage und öffnet Copilot Chat. "
                 "Die Antwort fügst du anschließend wieder in PAGER ein. Funktioniert überall, wo der "
                 "Copilot Chat verfügbar ist.",
-        "copilot-cli": "PAGER sendet den Prompt automatisch über die GitHub Copilot CLI und zeigt die "
-                       "Antwort live an. Nur möglich, wenn die CLI in eurer Umgebung freigegeben ist.",
-        "demo": "Zum Ausprobieren: Antworten werden simuliert, Copilot wird nicht aufgerufen.",
+        "acp": "PAGER spricht über das Agent Client Protocol (ACP) direkt mit einem KI-Agenten: heute "
+               "Claude Code, später die GitHub Copilot CLI. Antworten erscheinen live; Agent-Fenster in "
+               "Walkthroughs zeigen den rohen Output und erlauben direkte Nachrichten.",
+        "copilot-cli": "Älterer Einzelaufruf „copilot -p …“ ohne ACP: kein Agent-Fenster, keine Rückfragen. "
+                       "Für neue Einrichtungen „KI-Agent über ACP“ verwenden.",
+        "demo": "Zum Ausprobieren: Antworten und Agent-Fenster werden simuliert, keine KI wird aufgerufen.",
     }
 
     def _update_mode(self):
         key = self.backend.currentData()
         self.mode_hint.setText(self.MODE_HINTS.get(key, ""))
         self.cli_box.setVisible(key == "copilot-cli")
+        self.agent_panel.setVisible(key == "acp")
 
     def _update_chat_placeholder(self):
         host = self.host.text().strip().rstrip("/") or "https://github.com"

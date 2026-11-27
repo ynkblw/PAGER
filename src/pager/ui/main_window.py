@@ -8,12 +8,13 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QMainWindow, QMessageBox, QPushButton,
+    QApplication, QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from pager import __version__
-from pager.config import Settings, user_workflow_dir
+from pager.agent.events import PERMISSION_POLICIES
+from pager.config import Settings, builtin_workflow_dir, user_workflow_dir
 from pager.core import authoring
 from pager.core.workflow import Workflow, WorkflowLoadError, load_workflow, load_workflows
 from pager.core.prompting import prepare_prompt
@@ -25,7 +26,7 @@ from pager.ui.pages.home import HomePage
 from pager.ui.pages.run import RunPage
 from pager.ui.pages.settings import SettingsPage
 from pager.ui.pages.wizard import WizardPage
-from pager.ui.theme import app_icon
+from pager.ui.theme import app_icon, brand_logo
 from pager.ui.widgets.common import label
 
 
@@ -39,12 +40,11 @@ class Sidebar(QFrame):
         lay.setSpacing(4)
 
         lay.addWidget(label("PAGER", "Logo"))
-        lay.addWidget(label("Geführte Prompts für Copilot", "LogoSub"))
         lay.addSpacing(26)
 
         self.group = QButtonGroup(self)
         self.buttons: dict[str, QPushButton] = {}
-        for key, text in (("home", "🧭   Walkthroughs"), ("history", "🕘   Verlauf"), ("settings", "⚙️   Einstellungen")):
+        for key, text in (("home", "🧭   Start"), ("history", "🕘   Verlauf"), ("settings", "⚙️   Einstellungen")):
             btn = QPushButton(text)
             btn.setObjectName("NavButton")
             btn.setCheckable(True)
@@ -53,6 +53,17 @@ class Sidebar(QFrame):
             self.buttons[key] = btn
             lay.addWidget(btn)
         lay.addStretch()
+
+        brand = QFrame()
+        brand.setObjectName("BrandBox")
+        bl = QVBoxLayout(brand)
+        bl.setContentsMargins(14, 12, 14, 12)
+        self.brand = QLabel()
+        self.brand.setAlignment(Qt.AlignCenter)
+        self.brand.setPixmap(brand_logo(self.width() - 32 - 28, self.devicePixelRatioF()))
+        bl.addWidget(self.brand)
+        lay.addWidget(brand)
+        lay.addSpacing(8)
 
         box = QFrame()
         box.setObjectName("StatusBox")
@@ -72,6 +83,11 @@ class Sidebar(QFrame):
             self.status_title.setText("● Copilot Chat")
             host = settings.resolved_chat_url.split("//")[-1].split("/")[0]
             self.status_text.setText(f"Übergabe per Zwischenablage · {host}")
+            self.status_title.setStyleSheet("color: #7CF2C4;")
+        elif settings.backend == "acp":
+            self.status_title.setText(f"● {settings.backend_label} · ACP")
+            policy = PERMISSION_POLICIES.get(settings.permission_policy, "")
+            self.status_text.setText(f"KI-Agent · Freigaben: {policy}")
             self.status_title.setStyleSheet("color: #7CF2C4;")
         elif settings.backend == "demo":
             self.status_title.setText("● Demo-Modus")
@@ -108,7 +124,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.stack, 1)
 
         self.home = HomePage()
-        self.wizard = WizardPage()
+        self.wizard = WizardPage(settings)
         self.run = RunPage(settings)
         self.history = HistoryPage(lambda: self.settings.runs_path)
         self.settings_page = SettingsPage(settings)
@@ -132,6 +148,7 @@ class MainWindow(QMainWindow):
         self.home.reload_requested.connect(self.reload_workflows)
         self.wizard.back_home.connect(self._wizard_back)
         self.wizard.launch.connect(self.launch)
+        self.wizard.open_settings.connect(self.show_settings)
         self.run.new_run.connect(self.show_home)
         self.run.edit_answers.connect(lambda wf, a: self.start_workflow(wf, a))
         self.run.running_changed.connect(self._on_running)
@@ -161,6 +178,14 @@ class MainWindow(QMainWindow):
             if not self.editor.confirm_leave():
                 self._sync_nav()
                 return False
+        if current is self.wizard and page not in (self.wizard, self.run, self.handoff):
+            if self.wizard.agent_ctx and self.wizard.agent_ctx.busy and QMessageBox.question(
+                    self, "Agent arbeitet noch",
+                    "Im Agent-Fenster antwortet der Agent gerade. Abbrechen und die Seite verlassen?") \
+                    != QMessageBox.Yes:
+                self._sync_nav()
+                return False
+            self.wizard.discard_agent_context()
         self.stack.setCurrentWidget(page)
         self.sidebar.buttons[nav_key].setChecked(True)
         self._nav_key = nav_key
@@ -170,7 +195,8 @@ class MainWindow(QMainWindow):
         self.sidebar.buttons[getattr(self, "_nav_key", "home")].setChecked(True)
 
     def show_home(self):
-        self._show(self.home, "home")
+        if self._show(self.home, "home"):
+            self.reload_workflows()  # neue Walkthroughs aus geteilten Ordnern sofort sichtbar
 
     def show_history(self):
         if self._show(self.history, "history"):
@@ -202,11 +228,14 @@ class MainWindow(QMainWindow):
 
     def launch(self, wf: Workflow, answers: dict):
         self._wizard_from_editor = False
+        ctx = self.wizard.take_agent_context()
         if self.settings.backend == "chat":
+            if ctx:
+                ctx.close()
             self._launch_chat(wf, answers)
             return
         self._show(self.run, "home")
-        self.run.start(wf, answers)
+        self.run.start(wf, answers, ctx)
 
     def _launch_chat(self, wf: Workflow, answers: dict):
         """Copilot-Chat-Modus: Prompt bauen, Lauf anlegen, Übergabe-Seite zeigen."""
@@ -260,8 +289,19 @@ class MainWindow(QMainWindow):
         self.editor.open_new()
         self._open_editor()
 
+    @staticmethod
+    def _is_builtin(wf: Workflow) -> bool:
+        return bool(wf.source) and wf.source.parent.resolve() == builtin_workflow_dir().resolve()
+
     def edit_workflow(self, wf: Workflow):
         if not wf.source or not self.editor.confirm_leave():
+            return
+        if self._is_builtin(wf):
+            QMessageBox.information(
+                self, "Beispiel-Walkthrough",
+                f"„{wf.name}“ wird mit PAGER mitgeliefert und kann nicht direkt geändert werden.\n\n"
+                "Es wird eine eigene Kopie zum Bearbeiten angelegt.")
+            self.duplicate_workflow(wf, target_dir=user_workflow_dir())
             return
         try:
             self.editor.open_file(wf.source)
@@ -270,16 +310,24 @@ class MainWindow(QMainWindow):
             return
         self._open_editor()
 
-    def duplicate_workflow(self, wf: Workflow):
+    def duplicate_workflow(self, wf: Workflow, target_dir: Path | None = None):
         if not self.editor.confirm_leave():
             return
         draft = authoring.load_draft(wf.source)
         draft["name"] = f"{draft['name']} (Kopie)"
         draft["id"] = authoring.unique_id(f"{draft['id']}-kopie", list(self.workflows))
-        self.editor.open_new(draft, target_dir=wf.source.parent)
+        if target_dir is None:
+            target_dir = user_workflow_dir() if self._is_builtin(wf) else wf.source.parent
+        self.editor.open_new(draft, target_dir=target_dir)
         self._open_editor()
 
     def delete_workflow(self, wf: Workflow):
+        if self._is_builtin(wf):
+            QMessageBox.information(
+                self, "Beispiel-Walkthrough",
+                "Mitgelieferte Beispiele lassen sich nicht löschen. Unter Einstellungen → Ablage kannst du "
+                "sie ausblenden.")
+            return
         answer = QMessageBox.question(
             self, "Walkthrough löschen",
             f"„{wf.name}“ endgültig löschen?\n\nDatei: {wf.source}\n\nBisherige Läufe im Verlauf bleiben erhalten.")
@@ -329,9 +377,15 @@ class MainWindow(QMainWindow):
         if self.stack.currentWidget() is self.editor and not self.editor.confirm_leave():
             event.ignore()
             return
+        if self.wizard.agent_ctx and self.wizard.agent_ctx.busy and QMessageBox.question(
+                self, "Agent arbeitet noch", "Im Agent-Fenster antwortet der Agent gerade. PAGER trotzdem beenden?") \
+                != QMessageBox.Yes:
+            event.ignore()
+            return
+        self.wizard.discard_agent_context()
         if self.run.is_running:
             answer = QMessageBox.question(
-                self, "Copilot arbeitet noch", "Ein Lauf ist aktiv. Abbrechen und PAGER beenden?")
+                self, "Agent arbeitet noch", "Ein Lauf ist aktiv. Abbrechen und PAGER beenden?")
             if answer != QMessageBox.Yes:
                 event.ignore()
                 return

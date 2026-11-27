@@ -1,0 +1,103 @@
+# Mitgelieferter Beispiel-Walkthrough (schreibgeschützt – „Bearbeiten“ legt eine eigene Kopie an).
+# Testet die direkte Kommunikation mit dem KI-Agenten über ACP: Agent-Fenster mit rohem Output,
+# eigene Nachrichten, Werkzeug-Freigaben und Weiterverwendung der Sitzung im abschließenden Auftrag.
+id: agent-direktkontakt
+name: Agent-Direktkontakt (Test)
+description: >-
+  Prüft die Verbindung zum KI-Agenten (Claude Code, später GitHub Copilot CLI). Im Agent-Fenster
+  siehst du den rohen Output und schreibst dem Agenten direkt.
+category: Test & Einrichtung
+order: 1
+icon: 💬
+color: '#8A5CF6'
+background: '#EFE9FE'
+version: '1.0'
+output_name: verbindungstest.md
+steps:
+- id: vorbereitung
+  title: Vorbereitung
+  description: Ein paar Angaben für die erste Nachricht an den Agenten.
+  questions:
+  - id: thema
+    label: Worum soll es im Test gehen?
+    type: text
+    required: true
+    default: Verbindungstest
+    help: Wird in die erste Nachricht an den Agenten eingesetzt.
+  - id: antwortstil
+    label: Wie ausführlich soll der Agent antworten?
+    type: choice
+    default: kurz
+    options:
+    - value: kurz
+      label: Kurz
+      description: höchstens drei Sätze
+    - value: ausfuehrlich
+      label: Ausführlich
+      description: mit Erklärungen
+  - id: werkzeugtest
+    label: Soll der Agent ein Werkzeug benutzen (Freigabe testen)?
+    type: bool
+    default: false
+    help: Der Agent legt dann im Arbeitsordner des Laufs die Datei pager_test.txt an. PAGER fragt
+      vorher nach deiner Freigabe (je nach Einstellung).
+- id: direktkontakt
+  title: Direkter Draht zum Agenten
+  description: >-
+    Hier siehst du den rohen Output des Agenten, also Antworttext, Gedanken und Werkzeugaufrufe, so
+    wie sie ankommen. Unten kannst du ihm direkt schreiben (Strg+Enter sendet). Stellt der Agent
+    eine Rückfrage, wählst du die Antwort mit den Pfeiltasten aus und bestätigst mit Enter. Weiter
+    geht es, sobald der Agent geantwortet hat.
+  kind: agent
+  agent:
+    prompt: |
+      Hallo! Dies ist ein Test aus PAGER über das Agent Client Protocol (ACP).
+      Thema: {{ anzeige.thema }}.
+      Antworte {{ "kurz, in höchstens drei Sätzen" if answers.antwortstil == "kurz" else "ausführlich" }} und auf Deutsch.
+
+      1. Stelle dich kurz vor (Name und Modell, soweit bekannt).
+      2. Nenne dein aktuelles Arbeitsverzeichnis.
+      {% if answers.werkzeugtest %}
+      3. Lege im Arbeitsverzeichnis die Datei pager_test.txt mit dem Inhalt „Hallo von PAGER“ an und bestätige das.
+      {% else %}
+      3. Benutze in diesem Test außer der Rückfrage keine Werkzeuge.
+      {% endif %}
+
+      Stelle mir zum Schluss eine Rückfrage mit Auswahlmöglichkeiten (mit deinem Werkzeug für
+      Rückfragen), welche Funktion ich als Nächstes testen möchte: Rückfragen, Werkzeug-Freigaben
+      oder freier Dialog. Warte danach auf weitere Nachrichten von mir.
+    placeholder: Nachricht an den Agenten … (Strg+Enter sendet)
+- id: rueckmeldung
+  title: Rückmeldung
+  questions:
+  - id: funktioniert
+    label: Hat die direkte Kommunikation funktioniert?
+    type: choice
+    required: true
+    options:
+    - value: ja
+      label: Ja
+    - value: teilweise
+      label: Teilweise
+    - value: nein
+      label: Nein
+  - id: notizen
+    label: Notizen
+    type: textarea
+    placeholder: z. B. Antwortzeit, Auffälligkeiten, Freigaben
+prompt: |
+  Erstelle ein kurzes Testprotokoll in Markdown für unseren Verbindungstest „{{ anzeige.thema }}“
+  vom {{ heute }}.
+
+  - Ergebnis laut Nutzer: {{ anzeige.funktioniert }}
+  {% if answers.notizen %}
+  - Notizen des Nutzers: {{ answers.notizen }}
+  {% endif %}
+  - Werkzeugtest gewünscht: {{ anzeige.werkzeugtest }}
+
+  Gliederung: Zusammenfassung, Ablauf (anhand unseres bisherigen Gesprächs), Auffälligkeiten.
+  Benutze dafür keine Werkzeuge.
+
+  Letzte Antwort aus dem Agent-Fenster zur Erinnerung:
+
+  {{ agent.direktkontakt.antwort }}

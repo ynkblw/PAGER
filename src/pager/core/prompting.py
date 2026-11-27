@@ -16,7 +16,7 @@ from typing import Any
 from jinja2 import ChainableUndefined, Environment
 
 from pager.core.extract import extract_text
-from pager.core.workflow import Workflow, as_list
+from pager.core.workflow import Step, Workflow, agent_display, as_list
 
 INPUT_DIR = "eingaben"
 MAX_ATTACHMENT_CHARS = 40_000  # je Datei
@@ -37,6 +37,11 @@ DEFAULT_PROMPT = """\
 {{ dateien_liste }}
 Die Inhalte der Unterlagen findest du unten im Abschnitt „Anhänge“.
 {% endif %}
+{% for a in agent.values() if a.antwort %}
+
+## Ergebnis aus „{{ a.titel }}“
+{{ a.antwort }}
+{% endfor %}
 
 ## Antwort
 Antworte auf Deutsch als gut strukturierter Bericht in Markdown.
@@ -109,6 +114,15 @@ def build_context(workflow: Workflow, answers: dict[str, Any], attachments: list
         if q.id in visible and q.type not in ("file", "files"):
             rows.append(f"| {q.label} | {q.display(visible[q.id]).replace('|', '/')} |")
 
+    agent = {}
+    for step in workflow.agent_steps:
+        value = visible.get(step.id) if isinstance(visible.get(step.id), dict) else {}
+        agent[step.id] = {"titel": step.title, "antwort": value.get("antwort", ""),
+                          "verlauf": value.get("verlauf", ""), "nachrichten": value.get("nachrichten", 0)}
+
+    paths = [f"- {workflow.question(qid).label}: {rel}"
+             for qid, targets in file_targets(workflow, visible).items() for _, rel in targets]
+
     lines, files = [], {}
     for att in attachments:
         where = f"Anhang {att.number}" if att.embedded else "wird separat im Chat angehängt"
@@ -119,10 +133,13 @@ def build_context(workflow: Workflow, answers: dict[str, Any], attachments: list
     return {
         "workflow": workflow,
         "answers": visible,
-        "anzeige": {q.id: q.display(visible.get(q.id)) for q in workflow.questions},
+        "anzeige": {**{q.id: q.display(visible.get(q.id)) for q in workflow.questions},
+                    **{s.id: agent_display(visible.get(s.id)) for s in workflow.agent_steps}},
         "dateien": files,
         "antworten_tabelle": "\n".join(rows),
         "dateien_liste": "\n".join(lines),
+        "dateien_pfade": "\n".join(paths),
+        "agent": agent,
         "heute": dt.date.today().strftime("%d.%m.%Y"),
     }
 
@@ -161,3 +178,12 @@ def prepare_prompt(workflow: Workflow, answers: dict[str, Any], read_files: bool
 
 def render_prompt(workflow: Workflow, answers: dict[str, Any], read_files: bool = True) -> str:
     return prepare_prompt(workflow, answers, read_files)[0]
+
+
+def render_agent_prompt(workflow: Workflow, step: Step, answers: dict[str, Any]) -> str:
+    """Startnachricht eines Agent-Fensters. Dateien liegen im Arbeitsordner (``{{ dateien_pfade }}``)."""
+    template = (step.agent.prompt if step.agent else "").strip()
+    if not template:
+        return ""
+    attachments = collect_attachments(workflow, answers, read=False)
+    return _env.from_string(template).render(**build_context(workflow, answers, attachments)).strip()

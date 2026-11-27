@@ -51,13 +51,24 @@ class RunWorkspace:
     def prepare(self, workflow: Workflow, answers: dict[str, Any], prompt: str,
                 attachments: list[Attachment]) -> list[str]:
         """Kopiert die Unterlagen (Nachvollziehbarkeit), schreibt den Prompt, liefert Hinweise."""
+        self.copy_inputs(workflow, answers)
+        (self.root / PROMPT_FILE).write_text(prompt, encoding="utf-8")
+        return attachment_warnings(attachments, len(prompt))
+
+    def copy_inputs(self, workflow: Workflow, answers: dict[str, Any]) -> None:
+        """Kopiert hochgeladene Dateien nach ``eingaben/`` (auch für Agent-Fenster: Agent liest dort)."""
         for targets in file_targets(workflow, workflow.visible_answers(answers)).values():
             for src, rel in targets:
                 dest = self.root / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dest)
-        (self.root / PROMPT_FILE).write_text(prompt, encoding="utf-8")
-        return attachment_warnings(attachments, len(prompt))
+                if not dest.exists() or dest.stat().st_mtime < Path(src).stat().st_mtime:
+                    shutil.copy2(src, dest)
+
+    def write_transcript(self, step_id: str, text: str) -> Path:
+        """Gesprächsverlauf eines Agent-Fensters (``agent_<schritt>.md``)."""
+        path = self.root / f"agent_{step_id}.md"
+        path.write_text(text, encoding="utf-8")
+        return path
 
     # ---- Metadaten ---------------------------------------------------
     def write_meta(self, **values: Any) -> None:
