@@ -68,6 +68,30 @@ def _which(name: str, extra_dirs: list[Path] | None = None) -> str | None:
     return None
 
 
+def extend_search_path() -> None:
+    """Ergänzt ``PATH`` um die Ordner, in denen node, npx, claude und copilot üblicherweise liegen.
+
+    Aus dem Finder gestartete Mac-Apps erben nur ``/usr/bin:/bin:/usr/sbin:/sbin``. Ohne diese
+    Ergänzung fänden Skripte mit ``#!/usr/bin/env node`` (npx, claude-agent-acp) kein Node.js.
+    Unter Windows erbt die App den PATH des Nutzers, dort ist nichts zu tun.
+    """
+    if sys.platform == "win32":
+        return
+    current = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    extra: list[str] = []
+    shell = os.environ.get("SHELL") or ("/bin/zsh" if sys.platform == "darwin" else "/bin/sh")
+    try:  # PATH der Login-Shell (enthält Homebrew, nvm, volta … aus .zprofile/.zshrc)
+        out = subprocess.run([shell, "-ilc", 'printf "__PAGER_PATH__%s" "$PATH"'], capture_output=True,
+                             text=True, timeout=5, stdin=subprocess.DEVNULL).stdout
+        if "__PAGER_PATH__" in out:
+            extra += out.rsplit("__PAGER_PATH__", 1)[1].strip().split(os.pathsep)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    extra += [str(d) for d in _home_bins()]
+    merged = list(dict.fromkeys(current + [p for p in extra if p and os.path.isdir(p)]))
+    os.environ["PATH"] = os.pathsep.join(merged)
+
+
 def _home_bins() -> list[Path]:
     home = Path.home()
     dirs = [home / ".local" / "bin", home / ".claude" / "local", Path("/opt/homebrew/bin"), Path("/usr/local/bin")]

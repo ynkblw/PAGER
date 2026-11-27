@@ -19,6 +19,12 @@ def main() -> int:
 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f"pager.app.{__version__}")
 
+    if getattr(sys, "frozen", False):
+        # Als .app/.exe gestartet: PATH für node/npx/claude/copilot vervollständigen
+        from pager.agent.profiles import extend_search_path
+
+        extend_search_path()
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(__version__)

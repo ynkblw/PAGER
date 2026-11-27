@@ -138,12 +138,23 @@ flowchart LR
 
 ## Installation & Start
 
-### Anwender (Windows)
+### Anwender
 
-1. Den Ordner `PAGER` (aus dem Build, siehe [Build & Verteilung](#build--verteilung)) an einen
-   beliebigen Ort kopieren.
-2. `PAGER.exe` starten. Eine Installation oder Administratorrechte sind nicht nötig.
-3. Einmalig die [Einrichtung](#einrichtung) vornehmen.
+Fertige Programme gibt es unter [Releases](https://github.com/ynkblw/PAGER/releases/latest):
+
+| System | Datei | Start |
+|---|---|---|
+| Windows 10/11 | `PAGER-<version>-windows.zip` (empfohlen) | entpacken, `PAGER\PAGER.exe` starten |
+| Windows 10/11 | `PAGER-<version>-windows.exe` | einzelne Datei, direkt starten (startet etwas langsamer) |
+| macOS 12+ (Apple Silicon) | `PAGER-<version>-macos.zip` | entpacken, `PAGER.app` nach *Programme* ziehen |
+
+Eine Installation oder Administratorrechte sind nicht nötig. Danach einmalig die
+[Einrichtung](#einrichtung) vornehmen.
+
+Die Programme sind nicht von einem Hersteller signiert. Beim ersten Start warnt Windows deshalb
+(SmartScreen: *Weitere Informationen → Trotzdem ausführen*). macOS meldet, dass PAGER nicht
+geöffnet werden kann; dann unter *Systemeinstellungen → Datenschutz & Sicherheit* auf *Dennoch
+öffnen* klicken.
 
 ### Entwickler
 
@@ -531,13 +542,26 @@ Für einen einmaligen Test reicht „Eigener ACP-Agent“ in den Einstellungen.
 
 ## Build & Verteilung
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
+**Automatisch (GitHub Actions):** Ein Tag `v*` startet [`.github/workflows/release.yml`](.github/workflows/release.yml).
+Der Workflow baut auf Windows und macOS, führt die Tests aus und veröffentlicht ein Release mit
+allen Dateien. Den Text des Releases liefert [`.github/release-notes.md`](.github/release-notes.md).
+
+```bash
+# Version in pyproject.toml und src/pager/__init__.py anheben, committen, dann:
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
-Das Skript führt die Tests aus, erzeugt das Icon und baut mit PyInstaller den Ordner
-`dist\PAGER\` mit `PAGER.exe`. Dieser Ordner wird verteilt, z. B. als ZIP oder per
-Softwareverteilung.
+**Lokal:** Gebaut wird immer für das System, auf dem das Skript läuft. Windows-Programme
+lassen sich also nicht auf dem Mac bauen.
+
+```bash
+uv run python scripts/build.py --package             # macOS: dist/PAGER.app, release/*.zip
+uv run python scripts/build.py --onefile --package   # Windows: dist\PAGER\PAGER.exe + Einzeldatei
+```
+
+Unter Windows erledigt `scripts\build_windows.ps1` das samt Tests. Das Skript erzeugt das Icon
+aus `resources/pager.svg`, baut mit PyInstaller und packt die Ergebnisse nach `release/`. Auf
+macOS wird das Bundle ad hoc signiert; eine Notarisierung durch Apple erfolgt nicht.
 
 ## Roadmap
 
@@ -549,7 +573,8 @@ Softwareverteilung.
 - [ ] Walkthrough-Vorlagen und -Galerie zum schnellen Start
 - [ ] Strukturierte Antworten (z. B. Tabellen) → Excel-Export
 - [x] Mehrstufige Dialoge (Agent-Fenster, gemeinsame ACP-Sitzung)
-- [ ] Installer (MSI), Auto-Update, Firmen-Theme (Logo, Farben) konfigurierbar
+- [x] Fertige Programme für Windows (.exe) und macOS (.app) über GitHub Releases
+- [ ] Installer (MSI), Signierung/Notarisierung, Auto-Update, Firmen-Theme konfigurierbar
 - [ ] Englische Oberfläche
 
 ## FAQ
